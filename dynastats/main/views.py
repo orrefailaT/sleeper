@@ -35,3 +35,7 @@ class Import(LoginRequiredMixin, TemplateView):
                 deserialized_object.save()
         return render(request, 'main/import.html', {'form': form})
             
+
+class Summary(LoginRequiredMixin, TemplateView):
+    def get(self, request):
+        pass    

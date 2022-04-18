@@ -1,5 +1,10 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Enter your most recent league's league ID below.</h2>
 <form action="/import/" method="post">
     {% csrf_token %}
     {{ form }}
     <input type="submit" value="Submit">
 </form>
+{% endblock %}
