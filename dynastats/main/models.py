@@ -26,24 +26,4 @@ class Roster(models.Model):
     def __str__(self):
         return self.roster_id
 
-
-class Transaction(models.Model):
-    waiver_budget = models.JSONField()
-    type = models.CharField(max_length=80)
-    transaction_id = models.CharField(max_length=80)
-    status_updated = models.IntegerField()
-    status = models.CharField(max_length=80)
-    settings = models.JSONField()
-    roster_ids = models.JSONField()
-    metadata = models.JSONField()
-    leg = models.IntegerField()
-    drops = models.JSONField()
-    draft_picks = models.JSONField()
-    creator = models.CharField(max_length=80)
-    created = models.IntegerField()
-    consenter_ids = models.JSONField()
-    adds = models.JSONField()
-
-    def __str__(self):
-        return self.transaction_id
 """

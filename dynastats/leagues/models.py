@@ -2,6 +2,7 @@ from django.db import models
 
 # Create your models here.
 class League(models.Model):
+    last_updated = models.DateTimeField(auto_now=True, null=True)
     league_id = models.CharField(primary_key=True, max_length=80)
     previous_league_id = models.OneToOneField('self', on_delete=models.CASCADE, null=True)
     name = models.CharField(max_length=80)
