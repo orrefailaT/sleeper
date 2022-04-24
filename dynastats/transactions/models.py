@@ -11,7 +11,7 @@ class Transaction(models.Model):
     status_updated = models.DateTimeField()
     status = models.CharField(max_length=80)
     creator = models.CharField(max_length=80)
-    roster_ids = models.JSONField()
+    roster_ids = models.JSONField() # TODO: change to ManytoManyField with Rosters
     consenter_ids = models.JSONField(null=True)
     adds = models.JSONField(null=True)
     drops = models.JSONField(null=True)

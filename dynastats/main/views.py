@@ -1,5 +1,5 @@
 from django.contrib.auth.forms import UserCreationForm
-from django.core import serializers
+from django.core.serializers import deserialize
 from django.shortcuts import render
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.generic import TemplateView
@@ -45,7 +45,7 @@ class Import(LoginRequiredMixin, TemplateView):
                     *formatted_transactions
                 ]
 
-                for deserialized_object in serializers.deserialize('python', formatted_data, ignorenonexistent=True):
+                for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
                     print(deserialized_object)
                     deserialized_object.save()
 
