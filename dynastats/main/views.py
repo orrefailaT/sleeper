@@ -37,16 +37,28 @@ class Import(LoginRequiredMixin, TemplateView):
                 league_id = league_data['league_id']
 
                 transactions_data = api.get_season_transactions(league_id)
+                rosters_data = api.get_rosters(league_id)
+                users_data = api.get_users(league_id)
+                assert len(rosters_data) == len(users_data)
 
                 formatted_league = format.league(league_data)
                 formatted_transactions = [format.transaction(data, league_id) for data in transactions_data]
+                formatted_rosters = []
+                formatted_users = []
+
+                for i in range(len(rosters_data)):
+                    formatted_roster, formatted_user = format.roster_and_user(rosters_data[i], users_data[i])
+                    formatted_rosters.append(formatted_roster)
+                    formatted_users.append(formatted_user)
+                                    
                 formatted_data = [
                     formatted_league,
-                    *formatted_transactions
+                    *formatted_users,
+                    *formatted_rosters,
+                    *formatted_transactions,
                 ]
 
                 for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
-                    print(deserialized_object)
                     deserialized_object.save()
 
         return render(request, 'main/import.html', {'form': form})

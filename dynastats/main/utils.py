@@ -38,9 +38,18 @@ class SleeperAPI():
                 break
         return transactions_list
 
+    def get_rosters(self, league_id):
+        url = f'{self._base}/league/{league_id}/rosters'
+        return self._call(url)
+
+    def get_users(self, league_id):
+        url = f'{self._base}/league/{league_id}/users'
+        return self._call(url)
+
     def get_players(self):
         url = f'{self._base}/players/nfl'
         return self._call(url)
+
 
 
 class Formatter():
@@ -59,6 +68,7 @@ class Formatter():
         data['league_id'] = league_id
         data['created'] = datetime.fromtimestamp(data['created']/1000)
         data['status_updated'] = datetime.fromtimestamp(data['status_updated']/1000)
+        data['roster_ids'] = [f'{league_id}-{id}' for id in data['roster_ids']]
         transaction_type = data['type'].replace('_', '')
         formatted_transaction = {
             'model': f'transactions.{transaction_type}',
@@ -67,7 +77,36 @@ class Formatter():
         }
         return formatted_transaction
 
-    
+
+    def roster_and_user(self, roster_data, user_data):
+        roster_league_id = roster_data['league_id']
+        user_league_id = user_data['league_id']
+        assert roster_league_id == user_league_id
+
+        owner_id = roster_data['owner_id']
+        user_id = user_data['user_id']
+        assert owner_id == user_id
+
+        roster_data['roster_id'] = f"{roster_league_id}-{roster_data['roster_id']}"
+        roster_data['team_name'] = user_data['metadata'].get('team_name', f"{user_data['display_name']}'s Team")
+        for field in ['players', 'starters', 'taxi', 'reserve', 'co_owners']:
+            if roster_data[field] is None:
+                roster_data[field] = []
+        formatted_roster = {
+            'model': 'rosters.roster',
+            'pk': roster_data['roster_id'],
+            'fields': roster_data
+        }
+
+        formatted_user = {
+            'model': 'main.sleeperuser',
+            'pk': user_id,
+            'fields': user_data
+        }
+
+        return formatted_roster, formatted_user
+
+
     def player(self, data):
         formatted_player = {
             'model': 'main.player',
@@ -75,6 +114,7 @@ class Formatter():
             'fields': data
         }
         return formatted_player
+
 
 
 def update_players():

@@ -1,9 +1,14 @@
 from django.contrib import admin
 
-from .models import Commissioner, FreeAgent, Trade, Transaction, Waiver
+from .models import Commissioner, FreeAgent, Trade, Waiver
 
 # Register your models here.
-admin.site.register(FreeAgent)
-admin.site.register(Waiver)
-admin.site.register(Trade)
-admin.site.register(Commissioner)
+
+class TransactionAdmin(admin.ModelAdmin):
+    def has_change_permission(self, request, obj=None):
+        return False
+
+admin.site.register(FreeAgent, TransactionAdmin)
+admin.site.register(Waiver, TransactionAdmin)
+admin.site.register(Trade, TransactionAdmin)
+admin.site.register(Commissioner, TransactionAdmin)

@@ -1,11 +1,11 @@
 from django.contrib import admin
 
-from .models import League
-
+from .models import Roster
 
 # Register your models here.
-class LeagueAdmin(admin.ModelAdmin):
+
+class RosterAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return False
 
-admin.site.register(League, LeagueAdmin)
+admin.site.register(Roster, RosterAdmin)
