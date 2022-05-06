@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from django.core.serializers import deserialize
+from django.utils.timezone import make_aware
 import requests
 
 
@@ -42,6 +43,22 @@ class SleeperAPI():
         url = f'{self._base}/league/{league_id}/rosters'
         return self._call(url)
 
+    def get_matchups(self, league_id, week):
+        url = f'{self._base}/league/{league_id}/matchups/{week}'
+        return self._call(url)
+
+    def get_season_matchups(self, league_id):
+        matchups_dict = {}
+        week = 1
+        while True:
+            matchups = self.get_matchups(league_id, week)
+            if matchups:
+                matchups_dict[week] = matchups
+                week += 1
+            else:
+                break
+        return matchups_dict
+
     def get_users(self, league_id):
         url = f'{self._base}/league/{league_id}/users'
         return self._call(url)
@@ -63,11 +80,10 @@ class Formatter():
         }
         return formatted_league
 
-
     def transaction(self, data, league_id):
         data['league_id'] = league_id
-        data['created'] = datetime.fromtimestamp(data['created']/1000)
-        data['status_updated'] = datetime.fromtimestamp(data['status_updated']/1000)
+        data['created'] = make_aware(datetime.fromtimestamp(data['created']/1000))
+        data['status_updated'] = make_aware(datetime.fromtimestamp(data['status_updated']/1000))
         data['roster_ids'] = [f'{league_id}-{id}' for id in data['roster_ids']]
         transaction_type = data['type'].replace('_', '')
         formatted_transaction = {
@@ -76,7 +92,6 @@ class Formatter():
             'fields': data
         }
         return formatted_transaction
-
 
     def roster_and_user(self, roster_data, user_data):
         roster_league_id = roster_data['league_id']
@@ -106,6 +121,42 @@ class Formatter():
 
         return formatted_roster, formatted_user
 
+    def _matchup(self, matchup_data):
+        formatted_matchup = {
+            'model': 'matchups.matchup',
+            'pk': matchup_data['matchup_id'],
+            'fields': matchup_data
+        }
+        return formatted_matchup
+
+    # instead of a single object, takes a weeks worth of objects
+    # format of data input is the format returned by SleeperAPI.get_matchups()
+    def matchups(self, data, league_id, week):
+        formatted_matchups=[]
+        matchup_map = {}
+
+        for matchup in data:
+            matchup['league_id'] = league_id
+            matchup['week'] = week
+            roster_id = f"{league_id}-{matchup['roster_id']}"
+            matchup['roster_id'] = roster_id
+            matchup_id = matchup['matchup_id']
+            matchup['matchup_id'] = f'{roster_id}-{week}'
+
+            if matchup_id is None:
+                formatted_matchups.append(self._matchup(matchup))
+                continue
+            
+            opponent_matchup = matchup_map.get(matchup_id) 
+            if opponent_matchup is not None:
+                matchup['opponent_matchup_id'] = opponent_matchup['matchup_id']
+                opponent_matchup['opponent_matchup_id'] = matchup['matchup_id']
+                formatted_matchups.append(self._matchup(matchup))
+                formatted_matchups.append(self._matchup(opponent_matchup))
+            else:
+                matchup_map[matchup_id] = matchup
+        
+        return formatted_matchups
 
     def player(self, data):
         formatted_player = {

@@ -9,15 +9,15 @@ class League(models.Model):
     season = models.CharField(max_length=80)
     sport = models.CharField(max_length=80)
     status = models.CharField(max_length=80)
-    total_rosters = models.IntegerField()
+    total_rosters = models.PositiveSmallIntegerField()
     season_type = models.CharField(max_length=80)
     settings = models.JSONField()
     scoring_settings = models.JSONField()
     roster_positions = models.JSONField()
     metadata = models.JSONField()
     draft_id = models.CharField(max_length=80)
-    bracket_id = models.IntegerField(null=True)
-    loser_bracket_id = models.IntegerField(null=True)
+    bracket_id = models.PositiveBigIntegerField(null=True)
+    loser_bracket_id = models.PositiveBigIntegerField(null=True)
     avatar = models.CharField(max_length=80, null=True)
 
     def __str__(self):

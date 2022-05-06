@@ -33,6 +33,7 @@ ALLOWED_HOSTS = []
 INSTALLED_APPS = [
     'main.apps.MainConfig',
     'leagues.apps.LeaguesConfig',
+    'matchups.apps.MatchupsConfig',
     'rosters.apps.RostersConfig',
     'transactions.apps.TransactionsConfig',
     'django.contrib.admin',

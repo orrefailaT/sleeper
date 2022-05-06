@@ -6,6 +6,7 @@ from django.views.generic import TemplateView
 
 from .forms import ImportForm
 from .utils import Formatter, SleeperAPI
+from matchups.models import Matchup
 
 # Create your views here.
 
@@ -45,17 +46,22 @@ class Import(LoginRequiredMixin, TemplateView):
                 formatted_transactions = [format.transaction(data, league_id) for data in transactions_data]
                 formatted_rosters = []
                 formatted_users = []
+                formatted_matchups = []
 
                 for i in range(len(rosters_data)):
                     formatted_roster, formatted_user = format.roster_and_user(rosters_data[i], users_data[i])
                     formatted_rosters.append(formatted_roster)
                     formatted_users.append(formatted_user)
-                                    
+
+                for week, data in api.get_season_matchups(league_id).items():
+                    formatted_matchups += format.matchups(data, league_id, week)
+                
                 formatted_data = [
                     formatted_league,
                     *formatted_users,
                     *formatted_rosters,
                     *formatted_transactions,
+                    *formatted_matchups,
                 ]
 
                 for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
