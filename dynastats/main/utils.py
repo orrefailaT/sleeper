@@ -1,4 +1,5 @@
 from datetime import datetime
+from dis import dis
 
 from django.core.serializers import deserialize
 from django.utils.timezone import make_aware
@@ -59,6 +60,18 @@ class SleeperAPI():
                 break
         return matchups_dict
 
+    def get_drafts(self, league_id):
+        url = f'{self._base}/league/{league_id}/drafts'
+        return self._call(url)
+
+    def get_draft(self, draft_id):
+        url = f'{self._base}/draft/{draft_id}'
+        return self._call(url)
+    
+    def get_draft_picks(self, draft_id):
+        url = f'{self._base}/draft/{draft_id}/picks'
+        return self._call(url)
+
     def get_users(self, league_id):
         url = f'{self._base}/league/{league_id}/users'
         return self._call(url)
@@ -73,6 +86,7 @@ class Formatter():
     def league(self, data):
         if data['previous_league_id'] == '0':
             data['previous_league_id'] = None
+        
         formatted_league =  {
             'model': 'leagues.league',
             'pk': data['league_id'],
@@ -82,10 +96,16 @@ class Formatter():
 
     def transaction(self, data, league_id):
         data['league_id'] = league_id
-        data['created'] = make_aware(datetime.fromtimestamp(data['created']/1000))
-        data['status_updated'] = make_aware(datetime.fromtimestamp(data['status_updated']/1000))
-        data['roster_ids'] = [f'{league_id}-{id}' for id in data['roster_ids']]
         transaction_type = data['type'].replace('_', '')
+
+        created = data['created']
+        status_updated = data['status_updated']
+        data['created'] = make_aware(datetime.fromtimestamp(created/1000))
+        data['status_updated'] = make_aware(datetime.fromtimestamp(status_updated/1000))
+
+        roster_ids = data['roster_ids']
+        data['roster_ids'] = [f'{league_id}-{id}' for id in roster_ids]
+        
         formatted_transaction = {
             'model': f'transactions.{transaction_type}',
             'pk': data['transaction_id'],
@@ -102,23 +122,26 @@ class Formatter():
         user_id = user_data['user_id']
         assert owner_id == user_id
 
-        roster_data['roster_id'] = f"{roster_league_id}-{roster_data['roster_id']}"
-        roster_data['team_name'] = user_data['metadata'].get('team_name', f"{user_data['display_name']}'s Team")
+        roster_id = roster_data['roster_id']
+        roster_data['roster_id'] = f"{roster_league_id}-{roster_id}"
+
+        display_name = user_data['display_name']
+        roster_data['team_name'] = user_data['metadata'].get('team_name', f"{display_name}'s Team")
+        
         for field in ['players', 'starters', 'taxi', 'reserve', 'co_owners']:
             if roster_data[field] is None:
                 roster_data[field] = []
+        
         formatted_roster = {
             'model': 'rosters.roster',
             'pk': roster_data['roster_id'],
             'fields': roster_data
         }
-
         formatted_user = {
             'model': 'main.sleeperuser',
             'pk': user_id,
             'fields': user_data
         }
-
         return formatted_roster, formatted_user
 
     def _matchup(self, matchup_data):
@@ -157,6 +180,33 @@ class Formatter():
                 matchup_map[matchup_id] = matchup
         
         return formatted_matchups
+
+    def draft(self, data):
+        start_time = data['start_time']
+        data['start_time'] = make_aware(datetime.fromtimestamp(start_time/1000))
+        formatted_draft = {
+            'model': 'rosters.draft',
+            'pk': data['draft_id'],
+            'fields': data
+        }
+        return formatted_draft
+
+    def pick(self, data, league_id):
+        roster_id = data['roster_id']
+        data['roster_id'] = f"{league_id}-{roster_id}"
+
+        draft_id = data['draft_id']
+        round = data['round']
+        draft_slot = data['draft_slot']
+        data['pick_id'] = f'{draft_id}-{round}-{draft_slot}'
+
+        formatted_pick = {
+            'model': 'rosters.pick',
+            'pk': data['pick_id'],
+            'fields': data
+        }
+        return formatted_pick
+
 
     def player(self, data):
         formatted_player = {

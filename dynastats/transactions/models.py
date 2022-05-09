@@ -5,7 +5,7 @@ from rosters.models import Roster
 # Create your models here.
 
 class Transaction(models.Model):
-    league_id = models.ForeignKey(League, on_delete=models.CASCADE, db_index=True)
+    league_id = models.ForeignKey(League, on_delete=models.CASCADE)
     transaction_id = models.CharField(max_length=80, primary_key=True)
     leg = models.PositiveSmallIntegerField()
     created = models.DateTimeField()
