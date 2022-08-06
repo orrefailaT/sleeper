@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+
+{% block content %}
+{% if league.avatar is not None %}
+    <img src="https://sleepercdn.com/avatars/thumbs/{{ league.avatar }}">
+{% endif %}
+<h2>{{ league.name }} {{ league.season }}</h2>
+{{ league }}
+
+<h2> Other seasons of this league:</h2>
+{% for league in related_leagues %}
+    <div>
+        {% if league.avatar is not None %}
+            <img src="https://sleepercdn.com/avatars/thumbs/{{ league.avatar }}">
+        {% endif %}
+        <a href="/leagues/{{ league.league_id }}"><h3>{{ league.name }}: {{ league.season }}</h3></a>
+    </div>
+{% endfor %}
+{% endblock %}

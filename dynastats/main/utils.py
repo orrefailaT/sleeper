@@ -107,17 +107,23 @@ class Formatter():
         }
         return formatted_league
 
-    def transaction(self, data, league_id):
+    def transaction(self, data: dict, league_id: str):
         data['league_id'] = league_id
-        transaction_type = data['type'].replace('_', '')
+        transaction_type = data['type']
 
-        created = data['created']
-        status_updated = data['status_updated']
-        data['created'] = make_aware(datetime.fromtimestamp(created/1000))
-        data['status_updated'] = make_aware(datetime.fromtimestamp(status_updated/1000))
+        if transaction_type == 'trade' and data['adds']:
+            data['players'] = list((data['adds'] or {}).keys())  # must make this less ugly
+        else:
+            data.update({
+                'adds': list((data['adds'] or {}).keys()),
+                'drops': list((data['drops'] or {}).keys())
+            })
 
-        roster_ids = data['roster_ids']
-        data['roster_ids'] = [f'{league_id}-{id}' for id in roster_ids]
+        data.update({
+            'created': make_aware(datetime.fromtimestamp(data['created']/1000)),
+            'status_updated': make_aware(datetime.fromtimestamp(data['status_updated']/1000)),
+            'roster_ids': [f'{league_id}-{id}' for id in data['roster_ids']]
+        })
         
         formatted_transaction = {
             'model': f'transactions.{transaction_type}',

@@ -1,7 +1,7 @@
 import requests
 from celery.utils.log import get_task_logger
 from django.core.serializers import deserialize
-from django.db.utils import OperationalError
+from django.db.utils import OperationalError, IntegrityError
 
 from main.utils import Formatter, SleeperAPI
 from dynastats.celery import app
@@ -14,7 +14,19 @@ def update_players():
     with requests.Session() as session:
         api = SleeperAPI(session)
         players = api.get_players()
+    
     formatted_players = [format.player(p) for p in players.values()]
+    
+    # empty spots in roster player lists are designated with player id "0"
+    # create an empty player to prevent foreign key errors
+    empty_player = {
+        'model': 'main.player',
+        'pk': '0',
+        'fields': {
+            'full_name': 'Empty'
+        }
+    }
+    formatted_players.append(empty_player)
 
     for deserialized_player in deserialize('python', formatted_players, ignorenonexistent=True):
         deserialized_player.save()
@@ -74,7 +86,10 @@ def import_league_history(input_league_id):
                 *formatted_picks,
             ]
             
-            for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
-                deserialized_object.save()
+            try:
+                for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
+                    deserialized_object.save()
+            except IntegrityError:
+                logger.error(deserialized_object)
 
     return input_league_id

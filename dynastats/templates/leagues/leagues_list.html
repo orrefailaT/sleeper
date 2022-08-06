@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Your Leagues</h2>
+{% for league in leagues %}
+    <div>
+        {% if league.avatar is not None %}
+            <img src="https://sleepercdn.com/avatars/thumbs/{{ league.avatar }}">
+        {% endif %}
+        <a href="/leagues/{{ league.league_id }}"><h3>{{ league.name }}</h3></a>
+    </div>
+{% endfor %}
+{% endblock %}
