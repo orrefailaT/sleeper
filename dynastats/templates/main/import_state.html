@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Status for import of league {{ league_id }}</h2>
+<div hx-get="{{ request.path }}" hx-trigger="every 2s" hx-swap="outerHTML">
+    <h2>Import State: {{ import_state }}</h2>
+    <h2>{{ message }}</h2>
+</div>
+{% endblock %}

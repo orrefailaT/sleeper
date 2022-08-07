@@ -10,7 +10,8 @@ class SleeperAPI():
     _base = 'https://api.sleeper.app/v1'
 
     def _call(self, url):
-        return requests.get(url).json()
+        response = requests.get(url)
+        return response.json()
 
     def get_league(self, league_id):
         url = f'{self._base}/league/{league_id}'
@@ -215,15 +216,3 @@ class Formatter():
             'fields': data
         }
         return formatted_player
-
-
-
-def update_players():
-    api = SleeperAPI()
-    format = Formatter()
-
-    players = api.get_players()
-    formatted_players = [format.player(p) for p in players.values()]
-
-    for deserialized_player in deserialize('python', formatted_players, ignorenonexistent=True):
-        deserialized_player.save()

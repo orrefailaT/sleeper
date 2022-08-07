@@ -6,6 +6,7 @@ from celery import Celery
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'dynastats.settings')
 
 app = Celery('dynastats')
+app.conf.update(result_extended=True)
 
 # Using a string here means the worker doesn't have to serialize
 # the configuration object to child processes.

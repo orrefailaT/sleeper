@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django_celery_beat',
+    'django_celery_results',
 ]
 
 MIDDLEWARE = [
@@ -128,6 +129,12 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"
+
+
+# Celery config
+CELERY_BROKER_URL = 'amqp://dynastats:MP3nAXpVFhjh8za5BBoc@localhost:5672/dynastats_vhost'
+CELERY_RESULT_BACKEND = 'django-db'

@@ -1,10 +1,25 @@
 from celery import shared_task
+from celery.utils.log import get_task_logger
 from django.core.serializers import deserialize
 
 from main.utils import Formatter, SleeperAPI
+from dynastats.celery import app
+
+logger = get_task_logger(__name__)
+
+@app.task
+def update_players():
+    api = SleeperAPI()
+    format = Formatter()
+
+    players = api.get_players()
+    formatted_players = [format.player(p) for p in players.values()]
+
+    for deserialized_player in deserialize('python', formatted_players, ignorenonexistent=True):
+        deserialized_player.save()
 
 
-@shared_task
+@app.task
 def import_league_history(input_league_id):
     api = SleeperAPI()
     format = Formatter()
@@ -13,7 +28,7 @@ def import_league_history(input_league_id):
     
     for league_data in leagues_data:
         league_id = league_data['league_id']
-
+        logger.info(league_id)
         transactions_data = api.get_season_transactions(league_id)
         rosters_data = api.get_rosters(league_id)
         users_data = api.get_users(league_id)
@@ -27,8 +42,8 @@ def import_league_history(input_league_id):
         formatted_drafts = []
         formatted_picks = []
 
-        for i in range(len(rosters_data)):
-            formatted_roster, formatted_user = format.roster_and_user(rosters_data[i], users_data[i])
+        for roster_data, user_data in zip(rosters_data, users_data):
+            formatted_roster, formatted_user = format.roster_and_user(roster_data, user_data)
             formatted_rosters.append(formatted_roster)
             formatted_users.append(formatted_user)
 
@@ -56,4 +71,4 @@ def import_league_history(input_league_id):
         for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
             deserialized_object.save()
 
-    return 'League history successfully imported!'
+    return input_league_id
