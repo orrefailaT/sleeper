@@ -1,16 +1,29 @@
 from datetime import datetime
-from dis import dis
+from json.decoder import JSONDecodeError
+from time import sleep
 
-from django.core.serializers import deserialize
 from django.utils.timezone import make_aware
 import requests
 
 
 class SleeperAPI():
+    def __init__(self, session: requests.Session) -> None:
+        self.session = session
+    
     _base = 'https://api.sleeper.app/v1'
 
-    def _call(self, url):
-        return requests.get(url).json()
+    def _call(self, url, attempts=0):
+        response = self.session.get(url)
+        try:
+            data = response.json()
+            return data
+        except JSONDecodeError:
+            attempts += 1
+            if attempts < 3:
+                sleep(0.5)
+                self._call(url, attempts)
+            else:
+                raise JSONDecodeError
 
     def get_league(self, league_id):
         url = f'{self._base}/league/{league_id}'
@@ -215,15 +228,3 @@ class Formatter():
             'fields': data
         }
         return formatted_player
-
-
-
-def update_players():
-    api = SleeperAPI()
-    format = Formatter()
-
-    players = api.get_players()
-    formatted_players = [format.player(p) for p in players.values()]
-
-    for deserialized_player in deserialize('python', formatted_players, ignorenonexistent=True):
-        deserialized_player.save()

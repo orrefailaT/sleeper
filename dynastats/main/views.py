@@ -1,13 +1,13 @@
+from celery.result import AsyncResult
 from django.contrib.auth import login
 from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.core.serializers import deserialize
-from django.shortcuts import render
-from django.views.generic import TemplateView
+from django.shortcuts import render, redirect
+from django.views.generic import FormView, TemplateView
 
 from .forms import ImportForm
-from .utils import Formatter, SleeperAPI
-
+from dynastats.celery import app
+from tasks.tasks import import_league_history
 # Create your views here.
 
 class Index(TemplateView):
@@ -15,7 +15,7 @@ class Index(TemplateView):
         return render(request, 'main/index.html')
 
 
-class Register(TemplateView):
+class Register(FormView):
     def get(self, request):
         form = UserCreationForm()
         return render(request, 'registration/register.html', {'form': form})
@@ -30,7 +30,7 @@ class Register(TemplateView):
             return render(request, 'registration/register.html', {'form': form})
 
 
-class Import(LoginRequiredMixin, TemplateView):
+class Import(LoginRequiredMixin, FormView):
     def get(self, request):
         form = ImportForm()
         return render(request, 'main/import.html', {'form': form})
@@ -38,60 +38,31 @@ class Import(LoginRequiredMixin, TemplateView):
     def post(self, request):
         form = ImportForm(request.POST)
         if form.is_valid():
-            api = SleeperAPI()
-            format = Formatter()
-
             input_league_id = form.cleaned_data['league_id']
-            leagues_data = api.get_all_leagues(input_league_id)[::-1] # reverse list to start with first league
-            
-            for league_data in leagues_data:
-                league_id = league_data['league_id']
-
-                transactions_data = api.get_season_transactions(league_id)
-                rosters_data = api.get_rosters(league_id)
-                users_data = api.get_users(league_id)
-                assert len(rosters_data) == len(users_data)
-
-                formatted_league = format.league(league_data)
-                formatted_transactions = [format.transaction(data, league_id) for data in transactions_data]
-                formatted_rosters = []
-                formatted_users = []
-                formatted_matchups = []
-                formatted_drafts = []
-                formatted_picks = []
-
-                for i in range(len(rosters_data)):
-                    formatted_roster, formatted_user = format.roster_and_user(rosters_data[i], users_data[i])
-                    formatted_rosters.append(formatted_roster)
-                    formatted_users.append(formatted_user)
-
-                for week, data in api.get_season_matchups(league_id).items():
-                    formatted_matchups += format.matchups(data, league_id, week)
-
-                for draft in api.get_drafts(league_id):
-                    draft_id = draft['draft_id']
-                    detailed_draft = api.get_draft(draft_id)
-                    formatted_drafts.append(format.draft(detailed_draft))
-                    
-                    picks = api.get_draft_picks(draft_id)
-                    formatted_picks += [format.pick(pick, league_id) for pick in picks]
-
-                formatted_data = [
-                    formatted_league,
-                    *formatted_users,
-                    *formatted_rosters,
-                    *formatted_transactions,
-                    *formatted_matchups,
-                    *formatted_drafts,
-                    *formatted_picks,
-                ]
-
-                for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
-                    deserialized_object.save()
-
-        return render(request, 'main/import.html', {'form': form})
+            res = import_league_history.delay(input_league_id)
+            task_id = res.id
+        return redirect(f'/import/{task_id}/')
 
 
-class Summary(LoginRequiredMixin, TemplateView):
-    def get(self, request):
-        pass    
+class ImportState(LoginRequiredMixin, TemplateView):
+    def get(self, request, task_id):
+        task = AsyncResult(task_id, app=app)
+        state = task.state.title()
+        league_id = task.args[2:-3]  # is this really the best way to do this? smh
+        message_map = {
+            'Pending': 'Your league is in the queue.',
+            'Started': 'Your league is currently importing!',
+            'Retry': 'Something went wrong, retrying...',
+            'Failure': 'Import failed, please try again later.',
+            'Success': 'League imported successfully!'
+        }
+        message = message_map[state]
+
+        status_code = 286 if state in ['Success', 'Failure'] else 200
+        context = {'league_id': league_id, 'import_state': state, 'message': message}
+        
+        hx_request = 'HX-Request' in request.headers
+        template = 'import_state_div' if hx_request else 'import_state'
+
+        return render(request, f'main/{template}.html', status=status_code,context=context)
+
