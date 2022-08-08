@@ -19,6 +19,7 @@ pkg_resources==0.0.0
 prompt-toolkit==3.0.29
 python-crontab==2.6.0
 python-dateutil==2.8.2
+python-decouple==3.6
 pytz==2022.1
 requests==2.27.1
 six==1.16.0
