@@ -41,29 +41,27 @@ class Import(LoginRequiredMixin, FormView):
             input_league_id = form.cleaned_data['league_id']
             res = import_league_history.delay(input_league_id)
             task_id = res.id
-        return redirect(f'/import/{task_id}/')
+        return redirect(f'/import/{input_league_id}/{task_id}/')
 
 
 class ImportState(LoginRequiredMixin, TemplateView):
-    def get(self, request, task_id):
+    def get(self, request, league_id, task_id):
         task = AsyncResult(task_id, app=app)
-        state = task.state
-        league_id = task.args
-        
+        state = task.state.title()
         message_map = {
-            'PENDING': 'Your league is in the queue.',
-            'STARTED': 'Your league is currently importing!',
-            'RETRY': 'Something went wrong, retrying...',
-            'FAILURE': 'Import failed, please try again later.',
-            'SUCCESS': 'League imported successfully!'
+            'Started': 'Your league is in the queue.',
+            'Pending': 'Your league is currently importing!',
+            'Retry': 'Something went wrong, retrying...',
+            'Failure': 'Import failed, please try again later.',
+            'Success': 'League imported successfully!'
         }
         message = message_map[state]
 
-        is_finished = state in ['FAILURE', 'SUCCESS']
-        context = {'import_state': state, 'message': message, 'league_id': league_id, 'is_finished': is_finished}
+        status_code = 286 if state in ['FAILURE', 'SUCCESS'] else 200
+        context = {'league_id': league_id, 'import_state': state, 'message': message}
         
         hx_request = 'HX-Request' in request.headers
         template = 'import_state_div' if hx_request else 'import_state'
 
-        return render(request, f'main/{template}.html', context=context)
+        return render(request, f'main/{template}.html', status=status_code,context=context)
 

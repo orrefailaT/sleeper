@@ -1,11 +1,2 @@
-{% if is_finished %}
-<div hx-get="{{ request.path }}" hx-trigger="every 2s" hx-swap="outerHTML">
-    <h2>Import State: {{ import_state }}</h2>
-    <h2>{{ message }}</h2>
-</div>
-{% else %}
-<div>
-    <h2>Import State: {{ import_state }}</h2>
-    <h2>{{ message }}</h2>
-</div>
-{% endif %}
+<h2>Import State: {{ import_state }}</h2>
+<h2>{{ message }}</h2>
