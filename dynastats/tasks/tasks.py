@@ -1,6 +1,7 @@
 import requests
 from celery.utils.log import get_task_logger
 from django.core.serializers import deserialize
+from django.db.utils import OperationalError
 
 from main.utils import Formatter, SleeperAPI
 from dynastats.celery import app
@@ -19,7 +20,7 @@ def update_players():
         deserialized_player.save()
 
 
-@app.task
+@app.task(autoretry_for=(OperationalError,), default_retry_delay=30)
 def import_league_history(input_league_id):
     format = Formatter()
     with requests.Session() as session:
@@ -72,7 +73,7 @@ def import_league_history(input_league_id):
                 *formatted_drafts,
                 *formatted_picks,
             ]
-
+            
             for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
                 deserialized_object.save()
 
