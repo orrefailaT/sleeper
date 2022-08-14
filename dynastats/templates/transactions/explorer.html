@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h2>Transaction Explorer</h2>
+
+<form action="/transactions/explorer" method="post">
+    {% csrf_token %}
+    {{ form }}
+    <input type="submit" value="Submit">
+</form>
+{% for transaction in transactions %}
+    {{ transaction }}
+{% endfor %}
+{% endblock %}
