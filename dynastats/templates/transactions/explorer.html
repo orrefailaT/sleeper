@@ -1,14 +1,14 @@
-{% extends 'base.html' %}
+{% extends 'base_htmx.html' %}
 
 {% block content %}
 <h2>Transaction Explorer</h2>
 
-<form action="/transactions/explorer" method="post">
+<form hx-post="/transactions/components/search_results/" hx-target="#search_results" method="post">
     {% csrf_token %}
     {{ form }}
     <input type="submit" value="Submit">
+    <datalist id="search_suggestions"></datalist>
 </form>
-{% for transaction in transactions %}
-    {{ transaction }}
-{% endfor %}
+
+<div id="search_results"></div>
 {% endblock %}

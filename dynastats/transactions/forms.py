@@ -11,5 +11,17 @@ class TransactionQuery(forms.Form):
         ('fa_drops', 'Free Agent Drops')
     )
 
-    player_name = forms.CharField(label='Player Name', max_length=64)
+    player_name = forms.CharField(
+        label='Player Name',
+        max_length=64, 
+        widget=forms.TextInput(attrs={
+            'placeholder': 'Enter player name...',
+            'type': 'search',
+            'name': 'search',
+            'autocomplete': 'off',
+            'list': 'search_suggestions',
+            'hx-post': '/transactions/components/search_suggestions/',
+            'hx-target': '#search_suggestions',
+            'hx-trigger': 'keyup changed delay:500ms, search'
+        }))
     transaction_type = forms.ChoiceField(choices=transaction_types)
