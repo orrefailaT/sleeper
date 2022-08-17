@@ -14,8 +14,10 @@ def update_players():
     with requests.Session() as session:
         api = SleeperAPI(session)
         players = api.get_players()
+    logger.info('Player Data Fetched!')
     
     formatted_players = [format.player(p) for p in players.values()]
+    logger.info('Player Data Formatted!')
     
     # empty spots in roster player lists are designated with player id "0"
     # create an empty player to prevent foreign key errors
@@ -41,14 +43,15 @@ def import_league_history(input_league_id):
         leagues_data = api.get_all_leagues(input_league_id)[::-1] # reverse list to start with first league
         
         for league_data in leagues_data:
+            league_id = league_data['league_id']
+            logger.info(f'Importing {league_id}')
+            
             formatted_rosters = []
             formatted_users = []
             formatted_matchups = []
             formatted_drafts = []
             formatted_picks = []
 
-            league_id = league_data['league_id']
-            logger.info(f'Importing {league_id}')
             
             rosters_data = api.get_rosters(league_id)
             users_data = api.get_users(league_id)
@@ -86,10 +89,8 @@ def import_league_history(input_league_id):
                 *formatted_picks,
             ]
             
-            try:
-                for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
-                    deserialized_object.save()
-            except IntegrityError:
-                logger.error(deserialized_object)
+            logger.info(f'Data fetched and formatted, saving to database...')
+            for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
+                deserialized_object.save()
 
     return input_league_id
