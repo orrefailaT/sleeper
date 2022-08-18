@@ -20,8 +20,9 @@ class TransactionQuery(forms.Form):
             'name': 'search',
             'autocomplete': 'off',
             'list': 'search_suggestions',
-            'hx-post': '/transactions/components/search_suggestions/',
+            'hx-trigger': 'keyup changed delay:500ms, search',
             'hx-target': '#search_suggestions',
-            'hx-trigger': 'keyup changed delay:500ms, search'
+            # make this more like tempalate url syntax?
+            'hx-post': '/transactions/components/search_suggestions/'
         }))
     transaction_type = forms.ChoiceField(choices=transaction_types)
