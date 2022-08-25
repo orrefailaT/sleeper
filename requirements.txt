@@ -16,7 +16,7 @@ django-timezone-field==5.0
 idna==3.3
 kombu==5.2.4
 pkg_resources==0.0.0
-prompt-toolkit==3.0.29
+prompt-toolkit==3.0.30
 python-crontab==2.6.0
 python-dateutil==2.8.2
 python-decouple==3.6
