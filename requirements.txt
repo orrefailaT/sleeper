@@ -1,7 +1,7 @@
 amqp==5.1.1
 asgiref==3.5.2
 backports.zoneinfo==0.2.1
-billiard==3.6.4.0
+billiard==4.0.2
 celery==5.2.7
 certifi==2021.10.8
 charset-normalizer==2.0.12
