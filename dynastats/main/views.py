@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from celery.result import AsyncResult
 from django.contrib.auth import login
 from django.contrib.auth.forms import UserCreationForm
@@ -76,17 +78,33 @@ class ImportState(LoginRequiredMixin, TemplateView):
                 'import_state': state,
                 'message': message
                 }
-            
-            status_code = 286 if state in ['Success', 'Failure'] else 200
-            
-            is_hx_request = 'HX-Request' in request.headers  # request is from htmx polling
-            template = self.div_template if is_hx_request else self.template
         else:
             raise Http404('Invalid Task ID')
 
-        return render(request, template, status=status_code,context=context)
+        return render(request, self.template,context=context)
 
 
 class Components(LoginRequiredMixin, View):
-    div_template = 'components/main/import_state.html'
+    template = 'components/main/import_state.html'
 
+    def get(self, request, component):
+        method = getattr(self, component)
+        return method(request)
+
+    def import_state(self, request):
+        referer = request.headers['Referer'] 
+        task_id = urlparse(referer).path.replace('import', '').replace('/','')
+        if task_id in request.session:
+            task = AsyncResult(task_id, app=app)
+            state = task.state.title()
+            message = ImportState.message_map[state]
+            context = {
+                'import_state': state,
+                'message': message
+                }
+            
+            status_code = 286 if state in ['Success', 'Failure'] else 200
+        else:
+            raise Http404('Invalid Task ID')
+
+        return render(request, self.template, context=context, status=status_code)
