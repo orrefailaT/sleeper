@@ -2,7 +2,6 @@ import requests
 from django import forms
 from django.core.exceptions import ValidationError
 
-from main.utils import SleeperAPI
 
 class ImportForm(forms.Form):
     league_id = forms.CharField(label='League ID', max_length=64)

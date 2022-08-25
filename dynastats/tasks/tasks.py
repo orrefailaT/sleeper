@@ -1,7 +1,7 @@
 import requests
 from celery.utils.log import get_task_logger
 from django.core.serializers import deserialize
-from django.db.utils import OperationalError
+from django.db.utils import OperationalError, IntegrityError
 
 from main.utils import Formatter, SleeperAPI
 from dynastats.celery import app
@@ -14,7 +14,21 @@ def update_players():
     with requests.Session() as session:
         api = SleeperAPI(session)
         players = api.get_players()
+    logger.info('Player Data Fetched!')
+    
     formatted_players = [format.player(p) for p in players.values()]
+    logger.info('Player Data Formatted!')
+    
+    # empty spots in roster player lists are designated with player id "0"
+    # create an empty player to prevent foreign key errors
+    empty_player = {
+        'model': 'main.player',
+        'pk': '0',
+        'fields': {
+            'full_name': 'Empty'
+        }
+    }
+    formatted_players.append(empty_player)
 
     for deserialized_player in deserialize('python', formatted_players, ignorenonexistent=True):
         deserialized_player.save()
@@ -29,14 +43,15 @@ def import_league_history(input_league_id):
         leagues_data = api.get_all_leagues(input_league_id)[::-1] # reverse list to start with first league
         
         for league_data in leagues_data:
+            league_id = league_data['league_id']
+            logger.info(f'Importing {league_id}')
+            
             formatted_rosters = []
             formatted_users = []
             formatted_matchups = []
             formatted_drafts = []
             formatted_picks = []
 
-            league_id = league_data['league_id']
-            logger.info(f'Importing {league_id}')
             
             rosters_data = api.get_rosters(league_id)
             users_data = api.get_users(league_id)
@@ -74,6 +89,7 @@ def import_league_history(input_league_id):
                 *formatted_picks,
             ]
             
+            logger.info(f'Data fetched and formatted, saving to database...')
             for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
                 deserialized_object.save()
 

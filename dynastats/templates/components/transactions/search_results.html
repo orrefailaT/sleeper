@@ -1,0 +1,15 @@
+{% for transaction in transactions %}
+<div>    
+    <p>{{ transaction.league_id.season }}: Week {{ transaction.leg }}</p>
+
+    <p>Users:</p>
+    {% for roster in transaction.roster_ids.all %}
+    <p> {{ roster.team_name }}</p>
+    {% endfor %}
+
+    <p>Adds: {{ transaction.adds }}</p>
+
+    <p>Drops: {{ transaction.drops }}</p>
+</div>
+<br>
+{% endfor %}

@@ -4,7 +4,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.http import Http404
 from django.shortcuts import render, redirect
-from django.views.generic import FormView, TemplateView
+from django.views.generic import FormView, TemplateView, View
 
 from .forms import ImportForm
 from dynastats.celery import app
@@ -56,7 +56,6 @@ class Import(LoginRequiredMixin, FormView):
 
 class ImportState(LoginRequiredMixin, TemplateView):
     template = 'main/import_state.html'
-    div_template = 'main/import_state_div.html'
     message_map = {
         'Pending': 'Your league is in the queue.',
         'Started': 'Your league is currently importing!',
@@ -86,4 +85,8 @@ class ImportState(LoginRequiredMixin, TemplateView):
             raise Http404('Invalid Task ID')
 
         return render(request, template, status=status_code,context=context)
+
+
+class Components(LoginRequiredMixin, View):
+    div_template = 'components/main/import_state.html'
 

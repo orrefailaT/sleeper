@@ -96,7 +96,7 @@ class SleeperAPI():
 
 
 class Formatter():
-    def league(self, data):
+    def league(self, data: dict) -> dict:
         if data['previous_league_id'] == '0':
             data['previous_league_id'] = None
         
@@ -107,17 +107,23 @@ class Formatter():
         }
         return formatted_league
 
-    def transaction(self, data, league_id):
+    def transaction(self, data: dict, league_id: str) -> dict:
         data['league_id'] = league_id
         transaction_type = data['type'].replace('_', '')
 
-        created = data['created']
-        status_updated = data['status_updated']
-        data['created'] = make_aware(datetime.fromtimestamp(created/1000))
-        data['status_updated'] = make_aware(datetime.fromtimestamp(status_updated/1000))
+        if transaction_type == 'trade' and data['adds']:
+            data['players'] = list((data['adds'] or {}).keys())  # must make this less ugly
+        else:
+            data.update({
+                'adds': list((data['adds'] or {}).keys()),
+                'drops': list((data['drops'] or {}).keys())
+            })
 
-        roster_ids = data['roster_ids']
-        data['roster_ids'] = [f'{league_id}-{id}' for id in roster_ids]
+        data.update({
+            'created': make_aware(datetime.fromtimestamp(data['created']/1000)),
+            'status_updated': make_aware(datetime.fromtimestamp(data['status_updated']/1000)),
+            'roster_ids': [f'{league_id}-{roster_id}' for roster_id in data['roster_ids']]
+        })
         
         formatted_transaction = {
             'model': f'transactions.{transaction_type}',
@@ -126,7 +132,7 @@ class Formatter():
         }
         return formatted_transaction
 
-    def roster_and_user(self, roster_data, user_data):
+    def roster_and_user(self, roster_data: dict, user_data: dict) -> 'tuple[dict]':
         roster_league_id = roster_data['league_id']
         user_league_id = user_data['league_id']
         assert roster_league_id == user_league_id
@@ -157,7 +163,7 @@ class Formatter():
         }
         return formatted_roster, formatted_user
 
-    def _matchup(self, matchup_data):
+    def _matchup(self, matchup_data: dict) -> dict:
         formatted_matchup = {
             'model': 'matchups.matchup',
             'pk': matchup_data['matchup_id'],
@@ -194,7 +200,7 @@ class Formatter():
         
         return formatted_matchups
 
-    def draft(self, data):
+    def draft(self, data: dict) -> dict:
         start_time = data['start_time']
         data['start_time'] = make_aware(datetime.fromtimestamp(start_time/1000))
         formatted_draft = {
@@ -204,7 +210,7 @@ class Formatter():
         }
         return formatted_draft
 
-    def pick(self, data, league_id):
+    def pick(self, data: dict, league_id:str) -> dict:
         roster_id = data['roster_id']
         data['roster_id'] = f"{league_id}-{roster_id}"
 
@@ -221,7 +227,7 @@ class Formatter():
         return formatted_pick
 
 
-    def player(self, data):
+    def player(self, data: dict) -> dict:
         formatted_player = {
             'model': 'main.player',
             'pk': data['player_id'],

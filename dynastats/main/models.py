@@ -13,6 +13,8 @@ class SleeperUser(models.Model):
 class Player(models.Model):
     player_id = models.CharField(max_length=16, primary_key=True)
     full_name = models.CharField(max_length=64)
+    search_full_name = models.CharField(max_length=64)
+    search_last_name = models.CharField(max_length=64)
     status = models.CharField(max_length=32, null=True)
     team = models.CharField(max_length=16, null=True)
     fantasy_positions = models.JSONField(null=True)

@@ -1,0 +1,14 @@
+{% extends 'base_htmx.html' %}
+
+{% block content %}
+<h2>Transaction Explorer</h2>
+
+<form hx-post="{% url 'transactions:components' 'search_results' %}" hx-target="#search_results" method="post">
+    {% csrf_token %}
+    {{ form }}
+    <input type="submit" value="Submit">
+    <datalist id="search_suggestions"></datalist>
+</form>
+
+<div id="search_results"></div>
+{% endblock %}
