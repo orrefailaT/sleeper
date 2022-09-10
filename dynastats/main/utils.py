@@ -7,50 +7,60 @@ import requests
 
 
 class SleeperAPI():
-    def __init__(self, session: requests.Session) -> None:
-        self.session = session
-    
     _base = 'https://api.sleeper.app/v1'
 
-    def _call(self, url, attempts=0):
-        response = self.session.get(url)
+    def _call(self, url, max_attempts=3):
+        attempts = 0
+        response = requests.get(url)
         try:
             data = response.json()
             return data
         except JSONDecodeError:
             attempts += 1
-            if attempts < 3:
+            if attempts < max_attempts:
                 sleep(0.5)
                 self._call(url, attempts)
             else:
-                raise JSONDecodeError
+                raise JSONDecodeError  #TODO: change exception to be related to HTTP status code
 
     def get_league(self, league_id):
         url = f'{self._base}/league/{league_id}'
         return self._call(url)
 
-    def get_all_leagues(self, league_id):
+    def get_league_history(self, league_id):
         leagues_data = []
-        while league_id != '0':
+        while league_id is not None and league_id != '0':
             league_data = self.get_league(league_id)
             leagues_data.append(league_data)
-            league_id = league_data['previous_league_id']
+            try:
+                league_id = league_data['previous_league_id']
+            except TypeError:
+                print(league_id)
+                break
         return leagues_data
+
+    def get_user_leagues(self, user_id, year): 
+        url = f'{self._base}/user/{user_id}/leagues/nfl/{year}'
+        return self._call(url)
+
+    def get_user(self, user_id):
+        url = f'{self._base}/user/{user_id}'
+        return self._call(url)
+
+    def get_users(self, league_id):
+        url = f'{self._base}/league/{league_id}/users'
+        return self._call(url)
 
     def get_transactions(self, league_id, week):
         url = f'{self._base}/league/{league_id}/transactions/{week}'
         return self._call(url)
 
-    def get_season_transactions(self, league_id):
+    def get_season_transactions(self, league_id, num_weeks=18):
         transactions_list = []                
-        week = 1
-        while True:
+        for week in range(1, num_weeks+1):
             transactions = self.get_transactions(league_id, week)
             if transactions:
                 transactions_list += transactions
-                week += 1
-            else:
-                break
         return transactions_list
 
     def get_rosters(self, league_id):
@@ -85,10 +95,6 @@ class SleeperAPI():
         url = f'{self._base}/draft/{draft_id}/picks'
         return self._call(url)
 
-    def get_users(self, league_id):
-        url = f'{self._base}/league/{league_id}/users'
-        return self._call(url)
-
     def get_players(self):
         url = f'{self._base}/players/nfl'
         return self._call(url)
@@ -96,7 +102,9 @@ class SleeperAPI():
 
 
 class Formatter():
-    def league(self, data: dict) -> dict:
+    def league(self, data: dict, users_list: list) -> dict:
+        data['sleeper_users'] = users_list
+        data['last_import_successful'] = False # will be assigned to True when import completes successfully
         if data['previous_league_id'] == '0':
             data['previous_league_id'] = None
         
@@ -132,6 +140,33 @@ class Formatter():
         }
         return formatted_transaction
 
+    def user(self, user_data: dict) -> dict:
+        user_id = user_data['user_id']
+        formatted_user = {
+            'model': 'main.sleeperuser',
+            'pk': user_id,
+            'fields': user_data
+        }
+        return formatted_user
+
+    def roster(self, roster_data: dict, team_name='Nobody\'s Team') -> dict:
+        roster_league_id = roster_data['league_id']
+        roster_id = roster_data['roster_id']
+        roster_data['roster_id'] = f"{roster_league_id}-{roster_id}"
+        roster_data['team_name'] = team_name
+
+        for field in ['players', 'starters', 'taxi', 'reserve', 'co_owners']:
+            if field in roster_data and roster_data[field] is None:
+                roster_data[field] = []
+        
+        formatted_roster = {
+            'model': 'rosters.roster',
+            'pk': roster_data['roster_id'],
+            'fields': roster_data
+        }
+        return formatted_roster
+
+    # TODO: Decouple users and rosters
     def roster_and_user(self, roster_data: dict, user_data: dict) -> 'tuple[dict]':
         roster_league_id = roster_data['league_id']
         user_league_id = user_data['league_id']
@@ -148,7 +183,7 @@ class Formatter():
         roster_data['team_name'] = user_data['metadata'].get('team_name', f"{display_name}'s Team")
         
         for field in ['players', 'starters', 'taxi', 'reserve', 'co_owners']:
-            if roster_data[field] is None:
+            if field in roster_data and roster_data[field] is None:
                 roster_data[field] = []
         
         formatted_roster = {
@@ -180,6 +215,11 @@ class Formatter():
         for matchup in data:
             matchup['league_id'] = league_id
             matchup['week'] = week
+            if matchup['players'] is None:
+                matchup['players'] = []
+            if matchup['starters'] is None:
+                matchup['starters'] = []
+
             roster_id = f"{league_id}-{matchup['roster_id']}"
             matchup['roster_id'] = roster_id
             matchup_id = matchup['matchup_id']
@@ -202,7 +242,8 @@ class Formatter():
 
     def draft(self, data: dict) -> dict:
         start_time = data['start_time']
-        data['start_time'] = make_aware(datetime.fromtimestamp(start_time/1000))
+        if start_time is not None:
+            data['start_time'] = make_aware(datetime.fromtimestamp(start_time/1000))
         formatted_draft = {
             'model': 'rosters.draft',
             'pk': data['draft_id'],
@@ -212,12 +253,16 @@ class Formatter():
 
     def pick(self, data: dict, league_id:str) -> dict:
         roster_id = data['roster_id']
-        data['roster_id'] = f"{league_id}-{roster_id}"
+        if roster_id is not None:
+            data['roster_id'] = f"{league_id}-{roster_id}"
 
         draft_id = data['draft_id']
         round = data['round']
         draft_slot = data['draft_slot']
         data['pick_id'] = f'{draft_id}-{round}-{draft_slot}'
+
+        if data['picked_by'] == '':
+            data['picked_by'] = None
 
         formatted_pick = {
             'model': 'rosters.pick',
