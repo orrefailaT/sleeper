@@ -6,7 +6,7 @@ from django.db import models
 class SleeperUser(models.Model):
     user_id = models.CharField(max_length=64, primary_key=True)
     display_name = models.CharField(max_length=64)
-    avatar = models.CharField(max_length=64)
+    avatar = models.CharField(max_length=64, null=True)
     site_user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True)
 
 

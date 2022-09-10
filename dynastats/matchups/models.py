@@ -9,7 +9,7 @@ class Matchup(models.Model):
     league_id = models.ForeignKey(League, on_delete=models.CASCADE)
     week = models.PositiveSmallIntegerField()
     matchup_id = models.CharField(max_length=128, primary_key=True)
-    opponent_matchup_id = models.OneToOneField('self', on_delete=models.RESTRICT, null=True, db_constraint=False)
+    opponent_matchup_id = models.ForeignKey('self', on_delete=models.RESTRICT, null=True, db_constraint=False)
     roster_id = models.ForeignKey(Roster, on_delete=models.RESTRICT)
     starters = models.ManyToManyField(Player, related_name='+')
     starters_points = models.JSONField()
