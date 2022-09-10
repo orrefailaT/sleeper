@@ -6,7 +6,7 @@ from main.models import SleeperUser
 class League(models.Model):
     last_updated = models.DateTimeField(auto_now=True, null=True)
     league_id = models.CharField(primary_key=True, max_length=80)
-    previous_league_id = models.OneToOneField('self', on_delete=models.RESTRICT, null=True, related_name='following_league')
+    previous_league_id = models.ForeignKey('self', on_delete=models.RESTRICT, null=True, related_name='following_league')
     name = models.CharField(max_length=80)
     season = models.CharField(max_length=80)
     sport = models.CharField(max_length=80)

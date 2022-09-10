@@ -27,14 +27,14 @@ class Draft(models.Model):
     settings = models.JSONField()
     season_type = models.CharField(max_length=32)
     season = models.CharField(max_length=4)
-    draft_order = models.JSONField()
+    draft_order = models.JSONField(null=True)
     metadata = models.JSONField(null=True)
 
 
 class Pick(models.Model):
     pick_id = models.CharField(max_length=64, primary_key=True)
     round = models.PositiveSmallIntegerField()
-    roster_id = models.ForeignKey(Roster, on_delete=models.RESTRICT)
+    roster_id = models.ForeignKey(Roster, on_delete=models.RESTRICT, null=True)
     player_id = models.ForeignKey(Player, on_delete=models.RESTRICT)
     picked_by = models.ForeignKey(SleeperUser, on_delete=models.RESTRICT, null=True)
     pick_no = models.PositiveSmallIntegerField()
