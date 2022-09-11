@@ -1,63 +1,107 @@
+import logging
 from datetime import datetime
 from json.decoder import JSONDecodeError
 from time import sleep
 
 from django.utils.timezone import make_aware
 import requests
+from requests import Response
 
+
+api_logger = logging.getLogger('api_logger')
+api_handler = logging.FileHandler('api.log')
+api_logger.addHandler(api_handler)
 
 class SleeperAPI():
+    def __init__(self, max_attempts=3, throttle=0) -> None:
+        self.max_attempts = max_attempts
+        self.throttle = throttle
+        self.error_flag = False
+
     _base = 'https://api.sleeper.app/v1'
 
-    def _call(self, url, max_attempts=3):
-        attempts = 0
+    def _log_error(self, url, status_code, exc_info=0):
+        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        api_logger.error(f'{timestamp} | URL: {url} | Status Code: {status_code}', exc_info=exc_info)
+
+    def _log_warning(self, url, status_code,):
+        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        api_logger.warning(f'{timestamp} | URL: {url} | Status Code: {status_code}')
+
+    def _call(self, url, attempt=1):
         response = requests.get(url)
-        try:
-            data = response.json()
-            return data
-        except JSONDecodeError:
-            attempts += 1
-            if attempts < max_attempts:
-                sleep(0.5)
-                self._call(url, attempts)
-            else:
-                raise JSONDecodeError  #TODO: change exception to be related to HTTP status code
+        status_code = response.status_code
+        if self.throttle:
+            sleep(self.throttle)
+        if status_code in (429, 500, 503) and attempt < self.max_attempts:
+            attempt += 1
+            self._log_error(url, status_code)
+            sleep(attempt)
+            response = self._call(url, attempt, self.max_attempts)
+        else:
+            return response
+
+    def _handle_response(self, response: Response, log_null: bool=True):
+        url = response.request.url
+        status_code = response.status_code
+        if status_code != 200:
+            self._log_error(url, status_code)
+            self.error_flag = True
+            data = None
+        else:
+            try:
+                data = response.json()
+                if not data and log_null:
+                    self._log_warning(url, status_code)
+            except JSONDecodeError:
+                self._log_error(url, status_code, exc_info=1)
+                self.error_flag = True
+                data = None
+        return data
 
     def get_league(self, league_id):
         url = f'{self._base}/league/{league_id}'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response, log_null=True)
 
     def get_league_history(self, league_id):
         leagues_data = []
         while league_id is not None and league_id != '0':
             league_data = self.get_league(league_id)
-            leagues_data.append(league_data)
-            try:
-                league_id = league_data['previous_league_id']
-            except TypeError:
-                print(league_id)
+            if league_data:
+                leagues_data.append(league_data)
+                try:
+                    league_id = league_data.get('previous_league_id')
+                except TypeError:
+                    self._log_error(f'{self._base}/league/{league_id}', 200, exc_info=1)
+                    break
+            else:
                 break
         return leagues_data
 
     def get_user_leagues(self, user_id, year): 
         url = f'{self._base}/user/{user_id}/leagues/nfl/{year}'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response)
 
     def get_user(self, user_id):
         url = f'{self._base}/user/{user_id}'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response)
 
     def get_users(self, league_id):
         url = f'{self._base}/league/{league_id}/users'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response)
 
     def get_transactions(self, league_id, week):
         url = f'{self._base}/league/{league_id}/transactions/{week}'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response, log_null=False)
 
     def get_season_transactions(self, league_id, num_weeks=18):
         transactions_list = []                
-        for week in range(1, num_weeks+1):
+        for week in range(1, num_weeks + 1):
             transactions = self.get_transactions(league_id, week)
             if transactions:
                 transactions_list += transactions
@@ -65,39 +109,42 @@ class SleeperAPI():
 
     def get_rosters(self, league_id):
         url = f'{self._base}/league/{league_id}/rosters'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response)
 
     def get_matchups(self, league_id, week):
         url = f'{self._base}/league/{league_id}/matchups/{week}'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response, log_null=False)
 
-    def get_season_matchups(self, league_id):
+    def get_season_matchups(self, league_id, num_weeks=18):
         matchups_dict = {}
         week = 1
-        while True:
+        for week in range(1, num_weeks + 1):
             matchups = self.get_matchups(league_id, week)
             if matchups:
                 matchups_dict[week] = matchups
-                week += 1
-            else:
-                break
         return matchups_dict
 
     def get_drafts(self, league_id):
         url = f'{self._base}/league/{league_id}/drafts'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response)
 
     def get_draft(self, draft_id):
         url = f'{self._base}/draft/{draft_id}'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response)
     
     def get_draft_picks(self, draft_id):
         url = f'{self._base}/draft/{draft_id}/picks'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response)
 
     def get_players(self):
         url = f'{self._base}/players/nfl'
-        return self._call(url)
+        response = self._call(url)
+        return self._handle_response(response)
 
 
 
