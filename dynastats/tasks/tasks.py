@@ -57,7 +57,7 @@ def crawl_leagues(year=2022):
     api = SleeperAPI()
     for user in sleeper_users:
         user_id = user.user_id
-        user_leagues = api.get_user_leagues(user_id, year)
+        user_leagues = api.get_user_leagues(user_id)
         if not user_leagues:
             continue
         for league_data in user_leagues:
@@ -84,11 +84,11 @@ def import_league_history(input_league_id, api: SleeperAPI=None, formatter: Form
     for league_data in leagues_data:
         league_id = league_data['league_id']
         league_exists = League.objects.filter(pk=league_id).exists()
-        if league_exists and League.objects.get(pk=league_id).last_import_successful:
-            logger.info(f'League {league_id} already imported, skipping...')
-        else:
-            import_league(league_data, api, formatter)
-    
+        # if league_exists and League.objects.get(pk=league_id).last_import_successful:
+            # logger.info(f'League {league_id} already imported, skipping...')
+        # else:
+        import_league(league_data, api, formatter)
+        logger.info(f'API calls used: {api.call_count}')
     return input_league_id
 
 
@@ -96,15 +96,16 @@ def import_league(league_data, api: SleeperAPI, formatter: Formatter):
     api.error_flag = False
 
     league_id = league_data['league_id']
+    season = league_data['season']
     logger.info(f'Importing {league_id}')
-    
-    formatted_league = formatter.league(league_data, list(users_by_id))
     
     users_data = api.get_users(league_id) or []
     users_by_id = {user['user_id']: user for user in users_data}
     
+    formatted_league = formatter.league(league_data, list(users_by_id))
+    
     formatted_transactions = []
-    transactions_data = api.get_season_transactions(league_id)
+    transactions_data = api.get_season_transactions(league_id, season)
     for transaction in transactions_data:
         formatted_transactions.append(formatter.transaction(transaction, league_id))
         creator_id = transaction['creator']
@@ -112,7 +113,7 @@ def import_league(league_data, api: SleeperAPI, formatter: Formatter):
             users_by_id[creator_id] = api.get_user(creator_id)
 
     formatted_matchups = []
-    matchups_data = api.get_season_matchups(league_id)
+    matchups_data = api.get_season_matchups(league_id, season)
     for week, data in matchups_data.items():
         formatted_matchups += formatter.matchups(data, league_id, week)
 
@@ -178,8 +179,3 @@ def import_league(league_data, api: SleeperAPI, formatter: Formatter):
         league = League.objects.get(pk=league_id)
         league.last_import_successful = True
         league.save()
-
-
-def update_error_flag(error_flag, update):
-    error_flag = error_flag or update
-    return error_flag

@@ -4,8 +4,10 @@ from json.decoder import JSONDecodeError
 from time import sleep
 
 from django.utils.timezone import make_aware
-import requests
-from requests import Response
+from requests import Response, Session
+from requests.adapters import HTTPAdapter
+from urllib3.exceptions import MaxRetryError
+from urllib3.util import Retry
 
 
 api_logger = logging.getLogger('api_logger')
@@ -13,33 +15,46 @@ api_handler = logging.FileHandler('api.log')
 api_logger.addHandler(api_handler)
 
 class SleeperAPI():
-    def __init__(self, max_attempts=3, throttle=0) -> None:
-        self.max_attempts = max_attempts
-        self.throttle = throttle
+    # https://docs.sleeper.app/
+    def __init__(self, max_attempts=3, throttle=0) -> None:    
+        self._session = self._create_session(max_attempts)
+        self._throttle = throttle
+        self.call_count = 0
         self.error_flag = False
+        
+        self._nfl_state = self.get_nfl_state()
+
 
     _base = 'https://api.sleeper.app/v1'
 
-    def _log_error(self, url, status_code, exc_info=0):
-        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        api_logger.error(f'{timestamp} | URL: {url} | Status Code: {status_code}', exc_info=exc_info)
+    def _create_session(self, max_attempts: int) -> Session:
+        status_forcelist = frozenset({429, 500, 503, 522})
+        retry = Retry(total=max_attempts, status_forcelist=status_forcelist, raise_on_status=False)
+        retry.RETRY_AFTER_STATUS_CODES = status_forcelist
+        adapter = HTTPAdapter(max_retries=retry)
+        session = Session()
+        session.mount('https://', adapter)
+        return session
 
-    def _log_warning(self, url, status_code,):
+    def _log_error(self, url, status_code, extra='', exc_info=0):
         timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        api_logger.warning(f'{timestamp} | URL: {url} | Status Code: {status_code}')
+        message = f'{timestamp} | URL: {url} | Status Code: {status_code}' 
+        message += f' | {extra}' if extra else ''
+        api_logger.error(message, exc_info=exc_info)
 
-    def _call(self, url, attempt=1):
-        response = requests.get(url)
-        status_code = response.status_code
-        if self.throttle:
-            sleep(self.throttle)
-        if status_code in (429, 500, 503) and attempt < self.max_attempts:
-            attempt += 1
-            self._log_error(url, status_code)
-            sleep(attempt)
-            response = self._call(url, attempt, self.max_attempts)
-        else:
-            return response
+    def _log_warning(self, url, status_code, extra=''):
+        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        message = f'{timestamp} | URL: {url} | Status Code: {status_code}'
+        message += f' | {extra}' if extra else ''
+        api_logger.warning(message)
+
+    def _call(self, url: str) -> Response:
+        # refactor to not raise exception to have access to raw response
+        response = self._session.get(url)
+        self.call_count += 1 + len(response.raw.retries.history)
+        if self._throttle:
+            sleep(self._throttle)
+        return response
 
     def _handle_response(self, response: Response, log_null: bool=True):
         url = response.request.url
@@ -52,11 +67,33 @@ class SleeperAPI():
             try:
                 data = response.json()
                 if not data and log_null:
-                    self._log_warning(url, status_code)
+                    self._log_warning(url, status_code, 'Unexpected Null Response')
             except JSONDecodeError:
                 self._log_error(url, status_code, exc_info=1)
                 self.error_flag = True
                 data = None
+        return data
+
+    def _get_week_count(self, season):
+        current_season = self._nfl_state['league_season']
+        current_week = self._nfl_state['leg']
+        season_type = self._nfl_state['season_type']
+        if season == current_season:
+            weeks_map = {
+                'pre': 1,
+                'regular': current_week,
+                'post': 17 if season < '2021' else 18
+            }
+            week_count = weeks_map[season_type]
+        else:
+            week_count = 17 if season < '2021' else 18
+        return week_count
+
+    def get_nfl_state(self):
+        url = f'{self._base}/state/nfl'
+        response = self._call(url)
+        data = self._handle_response(response)
+        assert data and isinstance(data, dict)
         return data
 
     def get_league(self, league_id):
@@ -68,18 +105,18 @@ class SleeperAPI():
         leagues_data = []
         while league_id is not None and league_id != '0':
             league_data = self.get_league(league_id)
-            if league_data:
-                leagues_data.append(league_data)
-                try:
-                    league_id = league_data.get('previous_league_id')
-                except TypeError:
-                    self._log_error(f'{self._base}/league/{league_id}', 200, exc_info=1)
-                    break
-            else:
+            if not league_data:
+                break
+            leagues_data.append(league_data)
+            try:
+                league_id = league_data.get('previous_league_id')
+            except TypeError:
+                self._log_error(f'{self._base}/league/{league_id}', 200, exc_info=1)
                 break
         return leagues_data
 
-    def get_user_leagues(self, user_id, year): 
+    def get_user_leagues(self, user_id): 
+        year = self._nfl_state['league_create_season']
         url = f'{self._base}/user/{user_id}/leagues/nfl/{year}'
         response = self._call(url)
         return self._handle_response(response)
@@ -93,34 +130,35 @@ class SleeperAPI():
         url = f'{self._base}/league/{league_id}/users'
         response = self._call(url)
         return self._handle_response(response)
+    
+    def get_rosters(self, league_id):
+        url = f'{self._base}/league/{league_id}/rosters'
+        response = self._call(url)
+        return self._handle_response(response)
 
     def get_transactions(self, league_id, week):
         url = f'{self._base}/league/{league_id}/transactions/{week}'
         response = self._call(url)
         return self._handle_response(response, log_null=False)
 
-    def get_season_transactions(self, league_id, num_weeks=18):
+    def get_season_transactions(self, league_id, season):
+        week_count = self._get_week_count(season)
         transactions_list = []                
-        for week in range(1, num_weeks + 1):
+        for week in range(1, week_count + 1):
             transactions = self.get_transactions(league_id, week)
             if transactions:
                 transactions_list += transactions
         return transactions_list
-
-    def get_rosters(self, league_id):
-        url = f'{self._base}/league/{league_id}/rosters'
-        response = self._call(url)
-        return self._handle_response(response)
 
     def get_matchups(self, league_id, week):
         url = f'{self._base}/league/{league_id}/matchups/{week}'
         response = self._call(url)
         return self._handle_response(response, log_null=False)
 
-    def get_season_matchups(self, league_id, num_weeks=18):
+    def get_season_matchups(self, league_id, season):
         matchups_dict = {}
-        week = 1
-        for week in range(1, num_weeks + 1):
+        week_count = self._get_week_count(season)
+        for week in range(1, week_count + 1):
             matchups = self.get_matchups(league_id, week)
             if matchups:
                 matchups_dict[week] = matchups
@@ -152,7 +190,7 @@ class Formatter():
     def league(self, data: dict, users_list: list) -> dict:
         data['sleeper_users'] = users_list
         data['last_import_successful'] = False # will be assigned to True when import completes successfully
-        if data['previous_league_id'] == '0':
+        if data.get('previous_league_id') == '0':
             data['previous_league_id'] = None
         
         formatted_league =  {
@@ -167,11 +205,11 @@ class Formatter():
         transaction_type = data['type'].replace('_', '')
 
         if transaction_type == 'trade' and data['adds']:
-            data['players'] = list((data['adds'] or {}).keys())  # must make this less ugly
+            data['players'] = list(data['adds'] or {})  # must make this less ugly
         else:
             data.update({
-                'adds': list((data['adds'] or {}).keys()),
-                'drops': list((data['drops'] or {}).keys())
+                'adds': list(data['adds'] or {}),
+                'drops': list(data['drops'] or {})
             })
 
         data.update({
