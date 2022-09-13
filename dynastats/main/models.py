@@ -1,5 +1,8 @@
+from datetime import datetime
+
 from django.contrib.auth.models import User
 from django.db import models
+from django.utils.timezone import make_aware
 
 
 # Create your models here.
@@ -8,6 +11,8 @@ class SleeperUser(models.Model):
     display_name = models.CharField(max_length=64)
     avatar = models.CharField(max_length=64, null=True)
     site_user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True)
+    all_seasons_crawled = models.BooleanField(default=False)
+    last_crawled = models.DateTimeField(default=make_aware(datetime(1970, 1, 1)))
 
 
 class Player(models.Model):

@@ -22,7 +22,7 @@ class League(models.Model):
     loser_bracket_id = models.PositiveBigIntegerField(null=True)
     avatar = models.CharField(max_length=80, null=True)
     sleeper_users = models.ManyToManyField(SleeperUser)
-    last_import_successful = models.BooleanField()
+    last_import_successful = models.BooleanField(default=False)
 
     def __str__(self):
         return self.league_id
