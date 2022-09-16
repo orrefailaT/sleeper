@@ -1,6 +1,10 @@
+from datetime import datetime
+
 from celery.utils.log import get_task_logger
 from django.core.serializers import deserialize
 from django.db.utils import OperationalError, IntegrityError
+from django.db.models import QuerySet
+from django.utils.timezone import make_aware
 
 from leagues.models import League
 from main.models import Player, SleeperUser
@@ -36,6 +40,16 @@ def update_players():
             }
         },
         {
+            # Player with this ID is on roster 7 here https://api.sleeper.app/v1/league/812149216389500928/rosters
+            # Added to the roster via commissioner action on 2021/4/2 https://api.sleeper.app/v1/league/650245798549880832/transactions/1
+            # Reached out to the owner of the roster, doesn't see the player.
+            # Contacted support, awaiting reply
+            'pk': '7542',
+            'defaults': {
+                'full_name': 'Unknown'
+            }
+        },
+        {
             # The Raiders are still listed as OAK in rosters from before they moved to Las Vegas
             'pk': 'OAK',
             'defaults': {
@@ -49,32 +63,76 @@ def update_players():
 
 
 @app.task(autoretry_for=(OperationalError,), default_retry_delay=30)
-def crawl_leagues(year=2022):
+def retry_league_import():
     formatter = Formatter()
-    sleeper_users = SleeperUser.objects.all()
-    leagues_checked = set()
-    
     api = SleeperAPI()
-    for user in sleeper_users:
+
+    leagues_to_retry: QuerySet[League] = League.objects.filter(last_import_successful=False).order_by('league_id')
+    leagues_count = leagues_to_retry.count()
+    failed_leagues = []
+    for league in leagues_to_retry:
+        api.error_flag = False
+        league_data = api.get_league(league.league_id)
+        import_league(league_data, api, formatter)
+        if api.error_flag is True:
+            failed_leagues.append[league.league_id]
+    success_count = leagues_count - len(failed_leagues)
+    return f'{success_count}/{leagues_count} retries successful. Failed leagues: {failed_leagues}'
+
+
+@app.task
+def crawl_leagues(num_users: int=100):
+    formatter = Formatter()
+    api = SleeperAPI()
+    leagues_checked = set()
+
+    sleeper_users: QuerySet[SleeperUser] = SleeperUser.objects.order_by('last_crawled')[:num_users]
+    for i, user in enumerate(sleeper_users):
         user_id = user.user_id
-        user_leagues = api.get_user_leagues(user_id)
+        user_leagues = api.get_all_user_leagues(user_id)
+        
+        if api.last_call_successful is not True:
+            logger.warning(f'Sleeper API call failed for user {user_id}, skipping...')
+            continue
         if not user_leagues:
             continue
+
+        logger.info(f'{len(user_leagues)} found for user {user_id} ({i + 1}/{num_users})')
         for league_data in user_leagues:
             league_id = league_data['league_id']
-            if league_id not in leagues_checked:
-                leagues_checked.add(league_id)
-                if League.objects.filter(league_id=league_id).exists() is False:
-                    previous_league_id = league_data.get('previous_league_id')
-                    if previous_league_id is not None and previous_league_id != '0':
-                        import_league_history(previous_league_id, api, formatter)
-                    import_league(league_data, api, formatter)
-                else:
-                    logger.info(f'League {league_id} already imported, skipping...')
+            if league_id in leagues_checked:
+                continue
+
+            if league_data['settings']['type'] != 2:
+                num_new_users = import_users(league_id, api, formatter)
+                logger.info(f'Skipping {league_id}, not a dynasty league. Found {num_new_users} new users.')
+            elif League.objects.filter(league_id=league_id).exists() is False:
+                import_league(league_data, api, formatter)
+            else:
+                logger.info(f'League {league_id} already imported, skipping...')
+            
+            leagues_checked.add(league_id)
+        
+        user.last_crawled = make_aware(datetime.utcnow())
+        user.save()
 
 
 @app.task(autoretry_for=(OperationalError,), default_retry_delay=30)
-def import_league_history(input_league_id, api: SleeperAPI=None, formatter: Formatter=None):
+def import_users(league_id: str, api: SleeperAPI, formatter: Formatter):
+    users_data = api.get_users(league_id) or []
+    num_new_users = 0
+    for user_data in users_data:
+        user_id = user_data['user_id']
+        defaults = {k: v for k,v in user_data.items() if k in formatter._sleeper_user_fields}
+        _, is_new_user = SleeperUser.objects.update_or_create(pk=user_id, defaults=defaults)  # refactor using transactions.atomic?
+        if is_new_user:
+            num_new_users += 1
+    
+    return num_new_users
+
+
+@app.task(autoretry_for=(OperationalError,), default_retry_delay=30)
+def import_league_history(input_league_id: str, api: SleeperAPI=None, formatter: Formatter=None) -> str:
     if api is None:
         api = SleeperAPI()
     if formatter is None:
@@ -84,15 +142,15 @@ def import_league_history(input_league_id, api: SleeperAPI=None, formatter: Form
     for league_data in leagues_data:
         league_id = league_data['league_id']
         league_exists = League.objects.filter(pk=league_id).exists()
-        # if league_exists and League.objects.get(pk=league_id).last_import_successful:
-            # logger.info(f'League {league_id} already imported, skipping...')
-        # else:
-        import_league(league_data, api, formatter)
-        logger.info(f'API calls used: {api.call_count}')
+        if league_exists and League.objects.get(pk=league_id).last_import_successful:
+            logger.info(f'League {league_id} already imported, skipping...')
+        else:
+            import_league(league_data, api, formatter)
     return input_league_id
 
 
-def import_league(league_data, api: SleeperAPI, formatter: Formatter):
+@app.task(autoretry_for=(OperationalError,), default_retry_delay=30)
+def import_league(league_data: dict, api: SleeperAPI, formatter: Formatter):
     api.error_flag = False
 
     league_id = league_data['league_id']
@@ -167,15 +225,17 @@ def import_league(league_data, api: SleeperAPI, formatter: Formatter):
         *formatted_picks,
     ]
     
+    logger.info(f'API calls used: {api.call_count}')
     logger.info(f'Data fetched and formatted, saving to database...')
     for deserialized_object in deserialize('python', formatted_data, ignorenonexistent=True):
         try:
             deserialized_object.save()
-        except IntegrityError:
-            logger.critical(vars(deserialized_object))
+        except IntegrityError as e:
+            # Do more research to determine if more specific messaging is possible
+            logger.critical(f'{e} | {vars(deserialized_object.object)}')
             api.error_flag = True
 
     if api.error_flag is False:
-        league = League.objects.get(pk=league_id)
+        league: League = League.objects.get(pk=league_id)
         league.last_import_successful = True
         league.save()
