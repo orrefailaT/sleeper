@@ -1,103 +1,236 @@
+from inspect import currentframe, getframeinfo
+import logging
 from datetime import datetime
 from json.decoder import JSONDecodeError
 from time import sleep
 
 from django.utils.timezone import make_aware
-import requests
+from django.db import models
+from requests import Response, Session
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
+from main.models import Player, SleeperUser
+
+
+api_logger = logging.getLogger('api_logger')
+api_handler = logging.FileHandler('api.log')
+api_logger.addHandler(api_handler)
 
 class SleeperAPI():
-    def __init__(self, session: requests.Session) -> None:
-        self.session = session
-    
+    # https://docs.sleeper.app/
+    def __init__(self, max_attempts: int=3, throttle: int=0) -> None:    
+        self._session = self._create_session(max_attempts)
+        self._throttle = throttle
+        self.call_count = 0
+        self.error_flag = False
+        self.last_call_successful = True
+        
+        self._nfl_state = self.get_nfl_state()
+
+
     _base = 'https://api.sleeper.app/v1'
 
-    def _call(self, url, attempts=0):
-        response = self.session.get(url)
-        try:
-            data = response.json()
-            return data
-        except JSONDecodeError:
-            attempts += 1
-            if attempts < 3:
-                sleep(0.5)
-                self._call(url, attempts)
-            else:
-                raise JSONDecodeError
+    def _create_session(self, max_attempts: int) -> Session:
+        status_forcelist = frozenset({429, 500, 503, 522})
+        retry = Retry(total=max_attempts, status_forcelist=status_forcelist, raise_on_status=False)
+        retry.RETRY_AFTER_STATUS_CODES = status_forcelist
+        adapter = HTTPAdapter(max_retries=retry)
+        session = Session()
+        session.mount('https://', adapter)
+        return session
 
-    def get_league(self, league_id):
+    def _log_error(self, url: str, status_code: int, extra: str='', exc_info: int=0) -> None:
+        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        message = f'{timestamp} | URL: {url} | Status Code: {status_code}' 
+        message += f' | {extra}' if extra else ''
+        api_logger.error(message, exc_info=exc_info)
+
+    def _log_warning(self, url: str, status_code: int, extra: str='') -> None:
+        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        message = f'{timestamp} | URL: {url} | Status Code: {status_code}'
+        message += f' | {extra}' if extra else ''
+        api_logger.warning(message)
+
+    def _log_null(self, args: list, extra: str='') -> None:
+        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        function_name = getframeinfo(currentframe().f_back).function
+        message = f'{timestamp} | Function: {function_name} | Args: {args}'
+        message += f' | {extra}' if extra else ''
+        api_logger.warning(message)
+
+    def _request(self, url: str) -> Response:
+        response = self._session.get(url)
+        self.call_count += 1 + len(response.raw.retries.history)
+        if self._throttle:
+            sleep(self._throttle)
+        return response
+
+    def _handle_response(self, response: Response) -> tuple:
+        url = response.request.url
+        status_code = response.status_code
+        if status_code != 200:
+            self._log_error(url, status_code)
+            self.last_call_successful = False
+            self.error_flag = True
+            data = None
+        else:
+            try:
+                data = response.json()
+            except JSONDecodeError:
+                self._log_error(url, status_code, exc_info=1)
+                self.last_call_successful = False
+                self.error_flag = True
+                data = None
+        return data, url, status_code
+
+    def _handle_response_data(self, response_data: tuple, log_null: bool):
+        data, url, status_code = response_data
+        if not data and log_null:
+            self._log_warning(url, status_code, 'Unexpected Null Response')
+        return data
+
+    def _call(self, url: str, log_null: bool):
+        self.last_call_successful = True
+        response = self._request(url)
+        response_data = self._handle_response(response)
+        data = self._handle_response_data(response_data, log_null)
+        return data
+
+    def _get_week_count(self, season: str) -> int:
+        current_season = self._nfl_state['league_season']
+        current_week = self._nfl_state['leg']
+        season_type = self._nfl_state['season_type']
+        if season == current_season:
+            weeks_map = {
+                'pre': 1,
+                'regular': current_week,
+                'post': 17 if season < '2021' else 18
+            }
+            week_count = weeks_map[season_type]
+        else:
+            week_count = 17 if season < '2021' else 18
+        return week_count
+
+    def get_nfl_state(self) -> dict:
+        url = f'{self._base}/state/nfl'
+        data = self._call(url, log_null=True)
+        assert data and isinstance(data, dict)
+        return data
+
+    def get_league(self, league_id: str) -> dict:
         url = f'{self._base}/league/{league_id}'
-        return self._call(url)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_all_leagues(self, league_id):
+    def get_league_history(self, league_id: str) -> list:
         leagues_data = []
-        while league_id != '0':
+        while league_id is not None and league_id != '0':
             league_data = self.get_league(league_id)
+            if not league_data:
+                break
             leagues_data.append(league_data)
-            league_id = league_data['previous_league_id']
+            try:
+                league_id = league_data.get('previous_league_id')
+            except TypeError:
+                self._log_error(f'{self._base}/league/{league_id}', 200, exc_info=1)
+                break
         return leagues_data
 
-    def get_transactions(self, league_id, week):
-        url = f'{self._base}/league/{league_id}/transactions/{week}'
-        return self._call(url)
+    def get_user_leagues(self, user_id: str, season: str) -> list:
+        url = f'{self._base}/user/{user_id}/leagues/nfl/{season}'
+        data = self._call(url, log_null=False)
+        return data
 
-    def get_season_transactions(self, league_id):
+    def get_all_user_leagues(self, user_id: str) -> list:
+        current_season = int(self._nfl_state['league_create_season'])
+        season = 2017  # Sleeper's first season
+        leagues_list = []
+        while season <= current_season:
+            data = self.get_user_leagues(user_id, season)
+            leagues_list += data or []
+            season += 1
+        if not leagues_list:
+            self._log_null([user_id], 'User has no leagues!')
+        return leagues_list
+
+    def get_user(self, user_id: str) -> dict:
+        url = f'{self._base}/user/{user_id}'
+        data = self._call(url, log_null=True)
+        return data
+
+    def get_users(self, league_id: str) -> list:
+        url = f'{self._base}/league/{league_id}/users'
+        data = self._call(url, log_null=True)
+        return data
+    
+    def get_rosters(self, league_id: str) -> list:
+        url = f'{self._base}/league/{league_id}/rosters'
+        data = self._call(url, log_null=True)
+        return data
+
+    def get_transactions(self, league_id: str, week: int) -> list:
+        url = f'{self._base}/league/{league_id}/transactions/{week}'
+        data = self._call(url, log_null=False)
+        return data
+
+    def get_season_transactions(self, league_id: str, season: str) -> list:
+        week_count = self._get_week_count(season)
         transactions_list = []                
-        week = 1
-        while True:
+        for week in range(1, week_count + 1):
             transactions = self.get_transactions(league_id, week)
             if transactions:
                 transactions_list += transactions
-                week += 1
-            else:
-                break
         return transactions_list
 
-    def get_rosters(self, league_id):
-        url = f'{self._base}/league/{league_id}/rosters'
-        return self._call(url)
-
-    def get_matchups(self, league_id, week):
+    def get_matchups(self, league_id: str, week: int) -> list:
         url = f'{self._base}/league/{league_id}/matchups/{week}'
-        return self._call(url)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_season_matchups(self, league_id):
+    def get_season_matchups(self, league_id: str, season: str) -> dict:
         matchups_dict = {}
-        week = 1
-        while True:
+        week_count = self._get_week_count(season)
+        for week in range(1, week_count + 1):
             matchups = self.get_matchups(league_id, week)
             if matchups:
                 matchups_dict[week] = matchups
-                week += 1
-            else:
-                break
         return matchups_dict
 
-    def get_drafts(self, league_id):
+    def get_drafts(self, league_id: str) -> list:
         url = f'{self._base}/league/{league_id}/drafts'
-        return self._call(url)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_draft(self, draft_id):
+    def get_draft(self, draft_id: str) -> dict:
         url = f'{self._base}/draft/{draft_id}'
-        return self._call(url)
+        data = self._call(url, log_null=True)
+        return data
     
-    def get_draft_picks(self, draft_id):
+    def get_draft_picks(self, draft_id: str) -> list:
         url = f'{self._base}/draft/{draft_id}/picks'
-        return self._call(url)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_users(self, league_id):
-        url = f'{self._base}/league/{league_id}/users'
-        return self._call(url)
-
-    def get_players(self):
+    def get_players(self) -> dict:
         url = f'{self._base}/players/nfl'
-        return self._call(url)
+        data = self._call(url, log_null=True)
+        return data
 
 
 
 class Formatter():
-    def league(self, data: dict) -> dict:
-        if data['previous_league_id'] == '0':
+    def __init__(self):
+        self._player_fields = self._get_fields(Player)
+        self._sleeper_user_fields =  self._get_fields(SleeperUser)
+
+    def _get_fields(self, Model: models.Model) -> tuple:
+        fields = (field.name for field in Model._meta.fields)
+        return fields
+
+    def league(self, data: dict, users_list: list) -> dict:
+        data['sleeper_users'] = users_list
+        if data.get('previous_league_id') == '0':
             data['previous_league_id'] = None
         
         formatted_league =  {
@@ -112,13 +245,12 @@ class Formatter():
         transaction_type = data['type'].replace('_', '')
 
         if transaction_type == 'trade' and data['adds']:
-            data['players'] = list((data['adds'] or {}).keys())  # must make this less ugly
+            data['players'] = list(data['adds'] or {})  # must make this less ugly
         else:
             data.update({
-                'adds': list((data['adds'] or {}).keys()),
-                'drops': list((data['drops'] or {}).keys())
+                'adds': list(data['adds'] or {}),
+                'drops': list(data['drops'] or {})
             })
-
         data.update({
             'created': make_aware(datetime.fromtimestamp(data['created']/1000)),
             'status_updated': make_aware(datetime.fromtimestamp(data['status_updated']/1000)),
@@ -132,6 +264,33 @@ class Formatter():
         }
         return formatted_transaction
 
+    def user(self, user_data: dict) -> dict:
+        user_id = user_data['user_id']
+        formatted_user = {
+            'model': 'main.sleeperuser',
+            'pk': user_id,
+            'fields': user_data
+        }
+        return formatted_user
+
+    def roster(self, roster_data: dict, team_name: str='Nobody\'s Team') -> dict:
+        roster_league_id = roster_data['league_id']
+        roster_id = roster_data['roster_id']
+        roster_data['roster_id'] = f"{roster_league_id}-{roster_id}"
+        roster_data['team_name'] = team_name
+
+        for field in ['players', 'starters', 'taxi', 'reserve', 'co_owners']:
+            if field in roster_data and roster_data[field] is None:
+                roster_data[field] = []
+        
+        formatted_roster = {
+            'model': 'rosters.roster',
+            'pk': roster_data['roster_id'],
+            'fields': roster_data
+        }
+        return formatted_roster
+
+    # TODO: Decouple users and rosters
     def roster_and_user(self, roster_data: dict, user_data: dict) -> 'tuple[dict]':
         roster_league_id = roster_data['league_id']
         user_league_id = user_data['league_id']
@@ -140,15 +299,15 @@ class Formatter():
         owner_id = roster_data['owner_id']
         user_id = user_data['user_id']
         assert owner_id == user_id
-
+        
         roster_id = roster_data['roster_id']
         roster_data['roster_id'] = f"{roster_league_id}-{roster_id}"
 
         display_name = user_data['display_name']
         roster_data['team_name'] = user_data['metadata'].get('team_name', f"{display_name}'s Team")
-        
+
         for field in ['players', 'starters', 'taxi', 'reserve', 'co_owners']:
-            if roster_data[field] is None:
+            if field in roster_data and roster_data[field] is None:
                 roster_data[field] = []
         
         formatted_roster = {
@@ -173,13 +332,18 @@ class Formatter():
 
     # instead of a single object, takes a weeks worth of objects
     # format of data input is the format returned by SleeperAPI.get_matchups()
-    def matchups(self, data, league_id, week):
+    def matchups(self, data: list, league_id: str, week: int):
         formatted_matchups=[]
         matchup_map = {}
 
         for matchup in data:
             matchup['league_id'] = league_id
             matchup['week'] = week
+            if matchup['players'] is None:
+                matchup['players'] = []
+            if matchup['starters'] is None:
+                matchup['starters'] = []
+
             roster_id = f"{league_id}-{matchup['roster_id']}"
             matchup['roster_id'] = roster_id
             matchup_id = matchup['matchup_id']
@@ -202,7 +366,8 @@ class Formatter():
 
     def draft(self, data: dict) -> dict:
         start_time = data['start_time']
-        data['start_time'] = make_aware(datetime.fromtimestamp(start_time/1000))
+        if start_time is not None:
+            data['start_time'] = make_aware(datetime.fromtimestamp(start_time/1000))
         formatted_draft = {
             'model': 'rosters.draft',
             'pk': data['draft_id'],
@@ -210,14 +375,18 @@ class Formatter():
         }
         return formatted_draft
 
-    def pick(self, data: dict, league_id:str) -> dict:
+    def pick(self, data: dict, league_id: str) -> dict:
         roster_id = data['roster_id']
-        data['roster_id'] = f"{league_id}-{roster_id}"
+        if roster_id is not None:
+            data['roster_id'] = f"{league_id}-{roster_id}"
 
         draft_id = data['draft_id']
         round = data['round']
         draft_slot = data['draft_slot']
         data['pick_id'] = f'{draft_id}-{round}-{draft_slot}'
+
+        if data['picked_by'] == '':
+            data['picked_by'] = None
 
         formatted_pick = {
             'model': 'rosters.pick',

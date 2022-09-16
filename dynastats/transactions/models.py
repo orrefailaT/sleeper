@@ -12,7 +12,7 @@ class Transaction(models.Model):
     created = models.DateTimeField()
     status_updated = models.DateTimeField()
     status = models.CharField(max_length=80)
-    creator = models.ForeignKey(SleeperUser, on_delete=models.CASCADE)
+    creator = models.ForeignKey(SleeperUser, on_delete=models.RESTRICT)
     roster_ids = models.ManyToManyField(Roster)
     consenter_ids = models.JSONField(null=True)
     draft_picks = models.JSONField(null=True)

@@ -146,5 +146,6 @@ LOGOUT_REDIRECT_URL = "/"
 CELERY_BROKER_URL = config('CELERY_BROKER_URL')
 CELERY_RESULT_BACKEND = 'django-db'
 CELERY_TASK_TRACK_STARTED = True
-CELERYBEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
-CELERY_TASK_RESULT_EXPIRES = timedelta(days=1)
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+CELERY_RESULT_EXPIRES = timedelta(days=1)
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
