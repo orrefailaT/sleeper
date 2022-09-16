@@ -103,7 +103,7 @@ def crawl_leagues(num_users: int=100):
             if league_id in leagues_checked:
                 continue
 
-            if league_data['settings']['type'] != 2:
+            if league_data['settings'].get('type') != 2:  # Not a dynasty league
                 num_new_users = import_users(league_id, api, formatter)
                 logger.info(f'Skipping {league_id}, not a dynasty league. Found {num_new_users} new users.')
             elif League.objects.filter(league_id=league_id).exists() is False:
