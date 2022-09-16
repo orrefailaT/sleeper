@@ -1,13 +1,16 @@
+from inspect import currentframe, getframeinfo
 import logging
 from datetime import datetime
 from json.decoder import JSONDecodeError
 from time import sleep
 
 from django.utils.timezone import make_aware
+from django.db import models
 from requests import Response, Session
 from requests.adapters import HTTPAdapter
-from urllib3.exceptions import MaxRetryError
 from urllib3.util import Retry
+
+from main.models import Player, SleeperUser
 
 
 api_logger = logging.getLogger('api_logger')
@@ -16,11 +19,12 @@ api_logger.addHandler(api_handler)
 
 class SleeperAPI():
     # https://docs.sleeper.app/
-    def __init__(self, max_attempts=3, throttle=0) -> None:    
+    def __init__(self, max_attempts: int=3, throttle: int=0) -> None:    
         self._session = self._create_session(max_attempts)
         self._throttle = throttle
         self.call_count = 0
         self.error_flag = False
+        self.last_call_successful = True
         
         self._nfl_state = self.get_nfl_state()
 
@@ -36,45 +40,64 @@ class SleeperAPI():
         session.mount('https://', adapter)
         return session
 
-    def _log_error(self, url, status_code, extra='', exc_info=0):
+    def _log_error(self, url: str, status_code: int, extra: str='', exc_info: int=0) -> None:
         timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         message = f'{timestamp} | URL: {url} | Status Code: {status_code}' 
         message += f' | {extra}' if extra else ''
         api_logger.error(message, exc_info=exc_info)
 
-    def _log_warning(self, url, status_code, extra=''):
+    def _log_warning(self, url: str, status_code: int, extra: str='') -> None:
         timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         message = f'{timestamp} | URL: {url} | Status Code: {status_code}'
         message += f' | {extra}' if extra else ''
         api_logger.warning(message)
 
-    def _call(self, url: str) -> Response:
-        # refactor to not raise exception to have access to raw response
+    def _log_null(self, args: list, extra: str='') -> None:
+        timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        function_name = getframeinfo(currentframe().f_back).function
+        message = f'{timestamp} | Function: {function_name} | Args: {args}'
+        message += f' | {extra}' if extra else ''
+        api_logger.warning(message)
+
+    def _request(self, url: str) -> Response:
         response = self._session.get(url)
         self.call_count += 1 + len(response.raw.retries.history)
         if self._throttle:
             sleep(self._throttle)
         return response
 
-    def _handle_response(self, response: Response, log_null: bool=True):
+    def _handle_response(self, response: Response) -> tuple:
         url = response.request.url
         status_code = response.status_code
         if status_code != 200:
             self._log_error(url, status_code)
+            self.last_call_successful = False
             self.error_flag = True
             data = None
         else:
             try:
                 data = response.json()
-                if not data and log_null:
-                    self._log_warning(url, status_code, 'Unexpected Null Response')
             except JSONDecodeError:
                 self._log_error(url, status_code, exc_info=1)
+                self.last_call_successful = False
                 self.error_flag = True
                 data = None
+        return data, url, status_code
+
+    def _handle_response_data(self, response_data: tuple, log_null: bool):
+        data, url, status_code = response_data
+        if not data and log_null:
+            self._log_warning(url, status_code, 'Unexpected Null Response')
         return data
 
-    def _get_week_count(self, season):
+    def _call(self, url: str, log_null: bool):
+        self.last_call_successful = True
+        response = self._request(url)
+        response_data = self._handle_response(response)
+        data = self._handle_response_data(response_data, log_null)
+        return data
+
+    def _get_week_count(self, season: str) -> int:
         current_season = self._nfl_state['league_season']
         current_week = self._nfl_state['leg']
         season_type = self._nfl_state['season_type']
@@ -89,19 +112,18 @@ class SleeperAPI():
             week_count = 17 if season < '2021' else 18
         return week_count
 
-    def get_nfl_state(self):
+    def get_nfl_state(self) -> dict:
         url = f'{self._base}/state/nfl'
-        response = self._call(url)
-        data = self._handle_response(response)
+        data = self._call(url, log_null=True)
         assert data and isinstance(data, dict)
         return data
 
-    def get_league(self, league_id):
+    def get_league(self, league_id: str) -> dict:
         url = f'{self._base}/league/{league_id}'
-        response = self._call(url)
-        return self._handle_response(response, log_null=True)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_league_history(self, league_id):
+    def get_league_history(self, league_id: str) -> list:
         leagues_data = []
         while league_id is not None and league_id != '0':
             league_data = self.get_league(league_id)
@@ -115,33 +137,44 @@ class SleeperAPI():
                 break
         return leagues_data
 
-    def get_user_leagues(self, user_id): 
-        year = self._nfl_state['league_create_season']
-        url = f'{self._base}/user/{user_id}/leagues/nfl/{year}'
-        response = self._call(url)
-        return self._handle_response(response)
+    def get_user_leagues(self, user_id: str, season: str) -> list:
+        url = f'{self._base}/user/{user_id}/leagues/nfl/{season}'
+        data = self._call(url, log_null=False)
+        return data
 
-    def get_user(self, user_id):
+    def get_all_user_leagues(self, user_id: str) -> list:
+        current_season = int(self._nfl_state['league_create_season'])
+        season = 2017  # Sleeper's first season
+        leagues_list = []
+        while season <= current_season:
+            data = self.get_user_leagues(user_id, season)
+            leagues_list += data or []
+            season += 1
+        if not leagues_list:
+            self._log_null([user_id], 'User has no leagues!')
+        return leagues_list
+
+    def get_user(self, user_id: str) -> dict:
         url = f'{self._base}/user/{user_id}'
-        response = self._call(url)
-        return self._handle_response(response)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_users(self, league_id):
+    def get_users(self, league_id: str) -> list:
         url = f'{self._base}/league/{league_id}/users'
-        response = self._call(url)
-        return self._handle_response(response)
+        data = self._call(url, log_null=True)
+        return data
     
-    def get_rosters(self, league_id):
+    def get_rosters(self, league_id: str) -> list:
         url = f'{self._base}/league/{league_id}/rosters'
-        response = self._call(url)
-        return self._handle_response(response)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_transactions(self, league_id, week):
+    def get_transactions(self, league_id: str, week: int) -> list:
         url = f'{self._base}/league/{league_id}/transactions/{week}'
-        response = self._call(url)
-        return self._handle_response(response, log_null=False)
+        data = self._call(url, log_null=False)
+        return data
 
-    def get_season_transactions(self, league_id, season):
+    def get_season_transactions(self, league_id: str, season: str) -> list:
         week_count = self._get_week_count(season)
         transactions_list = []                
         for week in range(1, week_count + 1):
@@ -150,12 +183,12 @@ class SleeperAPI():
                 transactions_list += transactions
         return transactions_list
 
-    def get_matchups(self, league_id, week):
+    def get_matchups(self, league_id: str, week: int) -> list:
         url = f'{self._base}/league/{league_id}/matchups/{week}'
-        response = self._call(url)
-        return self._handle_response(response, log_null=False)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_season_matchups(self, league_id, season):
+    def get_season_matchups(self, league_id: str, season: str) -> dict:
         matchups_dict = {}
         week_count = self._get_week_count(season)
         for week in range(1, week_count + 1):
@@ -164,32 +197,39 @@ class SleeperAPI():
                 matchups_dict[week] = matchups
         return matchups_dict
 
-    def get_drafts(self, league_id):
+    def get_drafts(self, league_id: str) -> list:
         url = f'{self._base}/league/{league_id}/drafts'
-        response = self._call(url)
-        return self._handle_response(response)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_draft(self, draft_id):
+    def get_draft(self, draft_id: str) -> dict:
         url = f'{self._base}/draft/{draft_id}'
-        response = self._call(url)
-        return self._handle_response(response)
+        data = self._call(url, log_null=True)
+        return data
     
-    def get_draft_picks(self, draft_id):
+    def get_draft_picks(self, draft_id: str) -> list:
         url = f'{self._base}/draft/{draft_id}/picks'
-        response = self._call(url)
-        return self._handle_response(response)
+        data = self._call(url, log_null=True)
+        return data
 
-    def get_players(self):
+    def get_players(self) -> dict:
         url = f'{self._base}/players/nfl'
-        response = self._call(url)
-        return self._handle_response(response)
+        data = self._call(url, log_null=True)
+        return data
 
 
 
 class Formatter():
+    def __init__(self):
+        self._player_fields = self._get_fields(Player)
+        self._sleeper_user_fields =  self._get_fields(SleeperUser)
+
+    def _get_fields(self, Model: models.Model) -> tuple:
+        fields = (field.name for field in Model._meta.fields)
+        return fields
+
     def league(self, data: dict, users_list: list) -> dict:
         data['sleeper_users'] = users_list
-        data['last_import_successful'] = False # will be assigned to True when import completes successfully
         if data.get('previous_league_id') == '0':
             data['previous_league_id'] = None
         
@@ -211,7 +251,6 @@ class Formatter():
                 'adds': list(data['adds'] or {}),
                 'drops': list(data['drops'] or {})
             })
-
         data.update({
             'created': make_aware(datetime.fromtimestamp(data['created']/1000)),
             'status_updated': make_aware(datetime.fromtimestamp(data['status_updated']/1000)),
@@ -234,7 +273,7 @@ class Formatter():
         }
         return formatted_user
 
-    def roster(self, roster_data: dict, team_name='Nobody\'s Team') -> dict:
+    def roster(self, roster_data: dict, team_name: str='Nobody\'s Team') -> dict:
         roster_league_id = roster_data['league_id']
         roster_id = roster_data['roster_id']
         roster_data['roster_id'] = f"{roster_league_id}-{roster_id}"
@@ -260,13 +299,13 @@ class Formatter():
         owner_id = roster_data['owner_id']
         user_id = user_data['user_id']
         assert owner_id == user_id
-
+        
         roster_id = roster_data['roster_id']
         roster_data['roster_id'] = f"{roster_league_id}-{roster_id}"
 
         display_name = user_data['display_name']
         roster_data['team_name'] = user_data['metadata'].get('team_name', f"{display_name}'s Team")
-        
+
         for field in ['players', 'starters', 'taxi', 'reserve', 'co_owners']:
             if field in roster_data and roster_data[field] is None:
                 roster_data[field] = []
@@ -293,7 +332,7 @@ class Formatter():
 
     # instead of a single object, takes a weeks worth of objects
     # format of data input is the format returned by SleeperAPI.get_matchups()
-    def matchups(self, data, league_id, week):
+    def matchups(self, data: list, league_id: str, week: int):
         formatted_matchups=[]
         matchup_map = {}
 
@@ -336,7 +375,7 @@ class Formatter():
         }
         return formatted_draft
 
-    def pick(self, data: dict, league_id:str) -> dict:
+    def pick(self, data: dict, league_id: str) -> dict:
         roster_id = data['roster_id']
         if roster_id is not None:
             data['roster_id'] = f"{league_id}-{roster_id}"
