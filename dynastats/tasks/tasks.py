@@ -81,7 +81,7 @@ def retry_league_import():
 
 
 @app.task
-def crawl_leagues(num_users: int=100):
+def crawl_leagues(num_users: int):
     formatter = Formatter()
     api = SleeperAPI()
     leagues_checked = set()
