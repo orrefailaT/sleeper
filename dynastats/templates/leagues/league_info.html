@@ -13,7 +13,7 @@
         {% if league.avatar is not None %}
             <img src="https://sleepercdn.com/avatars/thumbs/{{ league.avatar }}">
         {% endif %}
-        <a href="{% url 'leagues:league_info' league.league_id %}"><h3>{{ league.name }}: {{ league.season }}</h3></a>
+        <a href="{% url 'leagues:league_info' 'league.league_id' %}"><h3>{{ league.name }}: {{ league.season }}</h3></a>
     </div>
 {% endfor %}
 {% endblock %}
