@@ -15,8 +15,6 @@ class Transaction(models.Model):
     creator = models.ForeignKey(SleeperUser, on_delete=models.RESTRICT)
     roster_ids = models.ManyToManyField(Roster)
     consenter_ids = models.JSONField(null=True)
-    draft_picks = models.JSONField(null=True)
-    waiver_budget = models.JSONField(null=True)
     metadata = models.JSONField(null=True)
     settings = models.JSONField(null=True)
 
@@ -28,6 +26,8 @@ class Trade(Transaction):
     players = models.ManyToManyField(Player)
     adds = models.JSONField(null=True)
     drops = models.JSONField(null=True)
+    draft_picks = models.JSONField(null=True)
+    waiver_budget = models.JSONField(null=True)
     def __str__(self):
         return f'Trade: {self.transaction_id}'
 

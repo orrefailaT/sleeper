@@ -1,15 +1,75 @@
-{% for transaction in transactions %}
+{% for result in results %}
 <div>    
-    <p>{{ transaction.league_id.season }}: Week {{ transaction.leg }}</p>
+    <h3>{{ result.season }}: Week {{ result.week }}</h3>
+    <p>{{ result.date }}</p>
+    <p>Starting QB's: {{ result.qb_type }}</p>
+    <p>PPR: {{ result.ppr }}</p>
+    <p>PPTD: {{ result.pass_td }}</p>
+    <p>TE Premium: {{ result.te_premium }}</p>
 
-    <p>Users:</p>
-    {% for roster in transaction.roster_ids.all %}
-    <p> {{ roster.team_name }}</p>
-    {% endfor %}
+    {% if transaction_type == 'trades' %}
+        {% for side_num, trade_side in result.trade.items %}
+        <div>
+            <h4>Side {{ side_num }}</h4>
+            <p>Adds:</p>
+            <div>
+            {% if trade_side.adds.players %}
+                <span>Players:</span>
+                {% for player in trade_side.adds.players %}
+                    <span>{{ player.full_name }} {{ player.team }} {{ player.fantasy_positions }}</span>
+                {% endfor %}
+            {% endif %}
+            </div>
+            <div>
+            {% if trade_side.adds.picks %}
+                <span>Picks:</span>
+                {% for pick in trade_side.adds.picks %}
+                    <span>{{ pick.season }} Round {{ pick.round }}</span>
+                {% endfor %}
+            {% endif %}
+            </div>
+            <div>
+            {% if trade_side.adds.faab %}
+                <p>FAAB:</p>
+                {% for faab in trade_side.adds.faab %}
+                    <p>{{ faab }}</p>
+                {% endfor %}
+            {% endif %}
+            </div>
+        </div>
+        <div>
+            <p>Drops:</p>
+            <div>
+            {% if trade_side.drops.players %}
+                <span>Players:</span>
+                {% for player in trade_side.drops.players %}
+                    <span>{{ player.full_name }} {{ player.team }} {{ player.fantasy_positions }}</span>
+                {% endfor %}
+            {% endif %}
+            </div>
+            <div>
+            {% if trade_side.drops.picks %}
+                <span>Picks:</span>
+                {% for pick in trade_side.drops.picks %}
+                    <span>{{ pick.season }} Round {{ pick.round }}</span>
+                {% endfor %}
+            {% endif %}
+            </div>
+            <div>
+            {% if trade_side.drops.faab %}
+                <p>FAAB:</p>
+                {% for faab in trade_side.drops.faab %}
+                    <p>{{ faab }}</p>
+                {% endfor %}
+            {% endif %}
+            </div>
+        </div>
 
-    <p>Adds: {{ transaction.adds }}</p>
-
-    <p>Drops: {{ transaction.drops }}</p>
+        {% endfor %}
+    {% else %}
+        <p>Adds: {{ transaction.adds.all }}</p>
+        <p>Drops: {{ transaction.drops.all }}</p>
+    {% endif %}    
 </div>
 <br>
 {% endfor %}

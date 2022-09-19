@@ -4,11 +4,9 @@ from django.core.exceptions import ValidationError
 
 class TransactionQuery(forms.Form):
     transaction_types= (
-        ('trade_set', 'Trades'),
-        ('waiver_adds', 'Waiver Adds'),
-        ('waiver_drops', 'Waiver Drops'),
-        ('fa_adds', 'Free Agent Adds'),
-        ('fa_drops', 'Free Agent Drops')
+        ('trades', 'Trades'),
+        ('waivers', 'Waivers'),
+        ('free_agents', 'Free Agents'),
     )
 
     player_name = forms.CharField(
