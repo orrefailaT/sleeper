@@ -1,6 +1,7 @@
-from inspect import currentframe, getframeinfo
 import logging
+from collections import defaultdict
 from datetime import datetime
+from inspect import currentframe, getframeinfo
 from json.decoder import JSONDecodeError
 from time import sleep
 
@@ -123,7 +124,7 @@ class SleeperAPI():
         data = self._call(url, log_null=True)
         return data
 
-    def get_league_history(self, league_id: str) -> list:
+    def get_league_history(self, league_id: str) -> list[dict]:
         leagues_data = []
         while league_id is not None and league_id != '0':
             league_data = self.get_league(league_id)
@@ -137,12 +138,12 @@ class SleeperAPI():
                 break
         return leagues_data
 
-    def get_user_leagues(self, user_id: str, season: str) -> list:
+    def get_user_leagues(self, user_id: str, season: str) -> list[dict]:
         url = f'{self._base}/user/{user_id}/leagues/nfl/{season}'
         data = self._call(url, log_null=False)
         return data
 
-    def get_all_user_leagues(self, user_id: str) -> list:
+    def get_all_user_leagues(self, user_id: str) -> list[dict]:
         current_season = int(self._nfl_state['league_create_season'])
         season = 2017  # Sleeper's first season
         leagues_list = []
@@ -159,22 +160,22 @@ class SleeperAPI():
         data = self._call(url, log_null=True)
         return data
 
-    def get_users(self, league_id: str) -> list:
+    def get_users(self, league_id: str) -> list[dict]:
         url = f'{self._base}/league/{league_id}/users'
         data = self._call(url, log_null=True)
         return data
     
-    def get_rosters(self, league_id: str) -> list:
+    def get_rosters(self, league_id: str) -> list[dict]:
         url = f'{self._base}/league/{league_id}/rosters'
         data = self._call(url, log_null=True)
         return data
 
-    def get_transactions(self, league_id: str, week: int) -> list:
+    def get_transactions(self, league_id: str, week: int) -> list[dict]:
         url = f'{self._base}/league/{league_id}/transactions/{week}'
         data = self._call(url, log_null=False)
         return data
 
-    def get_season_transactions(self, league_id: str, season: str) -> list:
+    def get_season_transactions(self, league_id: str, season: str) -> list[dict]:
         week_count = self._get_week_count(season)
         transactions_list = []                
         for week in range(1, week_count + 1):
@@ -183,7 +184,7 @@ class SleeperAPI():
                 transactions_list += transactions
         return transactions_list
 
-    def get_matchups(self, league_id: str, week: int) -> list:
+    def get_matchups(self, league_id: str, week: int) -> list[dict]:
         url = f'{self._base}/league/{league_id}/matchups/{week}'
         data = self._call(url, log_null=True)
         return data
@@ -197,7 +198,7 @@ class SleeperAPI():
                 matchups_dict[week] = matchups
         return matchups_dict
 
-    def get_drafts(self, league_id: str) -> list:
+    def get_drafts(self, league_id: str) -> list[dict]:
         url = f'{self._base}/league/{league_id}/drafts'
         data = self._call(url, log_null=True)
         return data
@@ -207,7 +208,7 @@ class SleeperAPI():
         data = self._call(url, log_null=True)
         return data
     
-    def get_draft_picks(self, draft_id: str) -> list:
+    def get_draft_picks(self, draft_id: str) -> list[dict]:
         url = f'{self._base}/draft/{draft_id}/picks'
         data = self._call(url, log_null=True)
         return data
@@ -216,7 +217,6 @@ class SleeperAPI():
         url = f'{self._base}/players/nfl'
         data = self._call(url, log_null=True)
         return data
-
 
 
 class Formatter():
@@ -240,13 +240,37 @@ class Formatter():
         }
         return formatted_league
 
-    def transaction(self, data: dict, league_id: str) -> dict:
+    def transaction(self, data: dict, league_id: str, league_settings: dict) -> dict:
         data['league_id'] = league_id
         transaction_type = data['type'].replace('_', '')
 
-        if transaction_type == 'trade' and data['adds']:
-            data['players'] = list(data['adds'] or {})  # must make this less ugly
-        else:
+        if transaction_type == 'trade' and (adds := data['adds']):
+            data['players'] = list(adds)
+            
+            formatted_adds = defaultdict(list)
+            for player, roster in adds.items():
+                formatted_adds[roster].append(player)
+            data['adds'] = formatted_adds
+
+            drops = data['drops']
+            formatted_drops = defaultdict(list)
+            for player, roster in drops.items():
+                formatted_drops[roster].append(player)
+            data['drops'] = formatted_drops
+        elif (
+            transaction_type == 'waiver'
+            and (waiver_budget := league_settings['waiver_budget'])
+        ):
+            waiver_settings = data['settings'] or {}
+            waiver_bid = waiver_settings.setdefault('waiver_bid', 0)
+            waiver_bid_percent = 100 * waiver_bid / waiver_budget
+            waiver_settings['waiver_bid_percent'] = f'{waiver_bid_percent:.2f}%'
+            data.update({
+                'adds': list(data['adds'] or {}),
+                'drops': list(data['drops'] or {}),
+                'settings': waiver_settings
+            })
+        else:  # transaction_type freeagent or commissioner
             data.update({
                 'adds': list(data['adds'] or {}),
                 'drops': list(data['drops'] or {})
@@ -254,7 +278,11 @@ class Formatter():
         data.update({
             'created': make_aware(datetime.fromtimestamp(data['created']/1000)),
             'status_updated': make_aware(datetime.fromtimestamp(data['status_updated']/1000)),
-            'roster_ids': [f'{league_id}-{roster_id}' for roster_id in data['roster_ids']]
+            'roster_ids': [
+                f'{league_id}-{roster_id}'
+                for roster_id in data['roster_ids']
+                if roster_id <= league_settings['num_teams']
+                ]
         })
         
         formatted_transaction = {
@@ -291,7 +319,7 @@ class Formatter():
         return formatted_roster
 
     # TODO: Decouple users and rosters
-    def roster_and_user(self, roster_data: dict, user_data: dict) -> 'tuple[dict]':
+    def roster_and_user(self, roster_data: dict, user_data: dict) -> tuple[dict]:
         roster_league_id = roster_data['league_id']
         user_league_id = user_data['league_id']
         assert roster_league_id == user_league_id
@@ -332,7 +360,7 @@ class Formatter():
 
     # instead of a single object, takes a weeks worth of objects
     # format of data input is the format returned by SleeperAPI.get_matchups()
-    def matchups(self, data: list, league_id: str, week: int):
+    def matchups(self, data: list, league_id: str, week: int) -> list[dict]:
         formatted_matchups=[]
         matchup_map = {}
 
@@ -375,9 +403,11 @@ class Formatter():
         }
         return formatted_draft
 
-    def pick(self, data: dict, league_id: str) -> dict:
+    def pick(self, data: dict, league_id: str, league_settings: dict) -> dict:
         roster_id = data['roster_id']
-        if roster_id is not None:
+        if roster_id is not None and roster_id > league_settings['num_teams']:
+            data['roster_id'] = None
+        elif roster_id is not None:
             data['roster_id'] = f"{league_id}-{roster_id}"
 
         draft_id = data['draft_id']
